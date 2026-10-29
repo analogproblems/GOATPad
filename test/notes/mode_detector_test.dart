@@ -135,10 +135,30 @@ jobs:
       );
     });
 
-    test('HTML on the clipboard always means rich', () {
+    test('formatting on the clipboard means rich', () {
       expect(
-        detector.detect('Plain words', clipboardHadHtml: true),
+        detector.detect('Plain words', clipboardHadFormatting: true),
         const ModeGuess.rich(),
+      );
+      expect(
+        detector.detect('def f():\n    return 1', clipboardHadFormatting: true),
+        const ModeGuess.rich(),
+      );
+      // An image copied on its own has no plain text.
+      expect(
+        detector.detect('', clipboardHadFormatting: true),
+        const ModeGuess.rich(),
+      );
+    });
+
+    test('but JSON and XML stay code whatever the clipboard says', () {
+      expect(
+        detector.detect('{"a": 1}', clipboardHadFormatting: true),
+        const ModeGuess.code('json'),
+      );
+      expect(
+        detector.detect('<a><b/></a>', clipboardHadFormatting: true),
+        const ModeGuess.code('xml'),
       );
     });
   });

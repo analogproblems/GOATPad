@@ -7,8 +7,8 @@ import 'note_mode.dart';
 
 /// Picks a [NoteMode] for text pasted into a new note.
 ///
-/// The order matters: rich clipboard content wins, then exact formats
-/// (JSON, XML), then Markdown signs, then highlight.js-style language
+/// The order matters: exact formats (JSON, XML) win, then formatting on the
+/// clipboard, then Markdown signs, then highlight.js-style language
 /// detection, and plain text when nothing is confident.
 class ModeDetector {
   ModeDetector({this.languages = defaultLanguages}) {
@@ -61,18 +61,21 @@ class ModeDetector {
   final List<String> languages;
   final Highlight _highlight = Highlight();
 
-  ModeGuess detect(String text, {bool clipboardHadHtml = false}) {
-    if (clipboardHadHtml) return const ModeGuess.rich();
-
+  /// [clipboardHadFormatting] is set when the clipboard also held HTML with
+  /// headings, lists, emphasis, links, images or tables (see
+  /// `markdownFromHtml`).
+  ModeGuess detect(String text, {bool clipboardHadFormatting = false}) {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return const ModeGuess.plain();
-
     final sample = trimmed.length > sampleLength
         ? trimmed.substring(0, sampleLength)
         : trimmed;
 
-    if (_isJson(trimmed)) return const ModeGuess.code('json');
-    if (_isXml(trimmed, sample)) return const ModeGuess.code('xml');
+    if (trimmed.isNotEmpty) {
+      if (_isJson(trimmed)) return const ModeGuess.code('json');
+      if (_isXml(trimmed, sample)) return const ModeGuess.code('xml');
+    }
+    if (clipboardHadFormatting) return const ModeGuess.rich();
+    if (trimmed.isEmpty) return const ModeGuess.plain();
 
     final markdownSigns = _markdownSigns(sample);
     if (markdownSigns >= 2) return const ModeGuess.rich();

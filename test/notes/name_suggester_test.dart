@@ -27,6 +27,21 @@ void main() {
     );
   });
 
+  test('Rich notes are named by the words their Markdown shows', () {
+    String name(String markdown) =>
+        suggestName(markdown, const ModeGuess.rich(), now);
+    expect(
+      name('The [quick fox](https://example.com) jumps \\[1]'),
+      'The quick fox jumps [1]',
+    );
+    expect(name('![GPad logo](https://example.com/a.png)'), 'GPad logo');
+    expect(name('- [x] Ship part **four**'), 'Ship part four');
+    expect(name('```shell\nnpm install\n```'), 'npm install');
+    expect(name('---\n\nAfter the rule'), 'After the rule');
+    expect(name('| Name | Notes |\n| --- | --- |'), 'Name, Notes');
+    expect(name(r'Costs \*5\* (*about*)'), 'Costs *5* (about)');
+  });
+
   test('code with a leading comment uses the comment', () {
     expect(
       suggestName(

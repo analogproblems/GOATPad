@@ -143,6 +143,67 @@ void main() {
     });
   });
 
+  group('pasting formatted HTML', () {
+    const html = '<h2>Packing</h2><ul><li><b>Charger</b></li></ul>';
+
+    test('a new note from it is Rich and stored as Markdown', () {
+      final notepad = load();
+      final note = notepad.pasteAsNewNote('Packing\nCharger', html: html)!;
+      expect(note.guess, const ModeGuess.rich());
+      expect(note.text, '## Packing\n\n- **Charger**\n');
+      expect(note.title, 'Packing');
+      expect(storedText(note.id), note.text);
+      notepad.dispose();
+    });
+
+    test('an image on its own still makes a note', () {
+      final notepad = load();
+      final note = notepad.pasteAsNewNote(
+        '',
+        html: '<img src="https://example.com/cat.png" alt="Cat">',
+      )!;
+      expect(note.text, '![Cat](https://example.com/cat.png)\n');
+      expect(note.title, 'Cat');
+      notepad.dispose();
+    });
+
+    test('the first paste into a new note turns it Rich', () {
+      final notepad = load();
+      final note = notepad.newNote();
+      notepad.rename(note, 'My list');
+      expect(
+        notepad.pasteFormatted(note, text: 'Packing\nCharger', html: html),
+        isTrue,
+      );
+      expect(note.guess, const ModeGuess.rich());
+      expect(note.text, '## Packing\n\n- **Charger**\n');
+      expect(note.awaitingFirstPaste, isFalse);
+      // A name the person typed is kept.
+      expect(note.title, 'My list');
+      expect(storedText(note.id), note.text);
+
+      // Only the first paste: later ones go in as the editor pastes them.
+      expect(notepad.pasteFormatted(note, text: 'more', html: html), isFalse);
+      notepad.dispose();
+    });
+
+    test('HTML without formatting leaves the paste to the plain text', () {
+      final notepad = load();
+      final note = notepad.newNote();
+      expect(
+        notepad.pasteFormatted(
+          note,
+          text: 'Hi',
+          html: '<span style="color:red">Hi</span>',
+        ),
+        isFalse,
+      );
+      expect(note.text, '');
+      expect(note.awaitingFirstPaste, isTrue);
+      notepad.dispose();
+    });
+  });
+
   test('tabs, the selected tab and closed notes come back on restart', () {
     final notepad = load();
     final welcome = notepad.selected!;

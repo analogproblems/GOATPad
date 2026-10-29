@@ -32,24 +32,14 @@ Flutter (Dart) for one codebase across desktop now and mobile later.
 | Code and Plain editing | [re_editor](https://pub.dev/packages/re_editor) | Draws its own text instead of using `TextField`, so large pastes stay fast. Search and replace, folding, line numbers. |
 | Syntax highlighting and language detection | [re_highlight](https://pub.dev/packages/re_highlight) | A Dart port of highlight.js: ~190 grammars and `highlightAuto`. |
 | Rich editing | [flutter_quill](https://pub.dev/packages/flutter_quill) + [markdown_quill](https://pub.dev/packages/markdown_quill) | Picked by feel in the step 1 editor lab. See below. |
+| Pasted HTML | [html](https://pub.dev/packages/html), and [quill_native_bridge](https://pub.dev/packages/quill_native_bridge) on Windows | Reads formatting copied from a browser, Word or Google Docs. See "Rich notes and Markdown". |
 
 ### Rich editor choice
 
 **flutter_quill**, picked over fleather in the step 1 editor lab for its
 nicer UI. It is also the most used and most actively released. Quill stores
-its own Delta format, so Markdown goes through
-[markdown_quill](https://pub.dev/packages/markdown_quill) in both directions.
-
-Known gaps to handle in step 2:
-
-- Quill throws on any embed it has no builder for, and markdown_quill turns
-  `![alt](url)` and `---` into embeds. The lab shows rules as dividers and
-  images as their address. Remote images are not fetched, so pasting
-  Markdown never makes a network request on its own.
-- markdown_quill drops image alt text and escapes punctuation on the way
-  out (`Done.` becomes `Done\.`). The meaning survives, but the stored
-  Markdown gets noisier. Step 2 should either clean up its output or keep the
-  Delta next to the Markdown.
+its own Delta format, so Markdown is converted on the way in and out (see
+"Rich notes and Markdown" below).
 
 Other candidates:
 
@@ -82,10 +72,12 @@ GPad-only format. Switching a Rich note to Code shows its Markdown.
 `ModeDetector` (`lib/src/notes/mode_detector.dart`) picks a mode on the first
 paste into a new note:
 
-1. The clipboard carried HTML (pasted from a browser or Word): Rich. Flutter's
-   own clipboard API only exposes plain text, so this needs
-   [super_clipboard](https://pub.dev/packages/super_clipboard) in step 2.
-2. Parses as JSON, or is an XML document: Code.
+1. Parses as JSON, or is an XML document: Code.
+2. The clipboard also held HTML with formatting (headings, lists, quotes,
+   emphasis, links, images or tables), as text copied from a web page, Word,
+   Google Docs or LibreOffice does: Rich, holding that formatting as
+   Markdown. HTML that only colors code, as VS Code and many web pages put
+   on the clipboard, doesn't count, so copied code still becomes Code.
 3. Two or more kinds of Markdown syntax (headings, lists, links, fences,
    bold, quotes, tasks): Rich.
 4. `highlightAuto` over ~20 common languages scores at least 3 and the text
@@ -103,6 +95,74 @@ for code, or "SQL snippet 14:03" as a fallback.
 
 Naming, organizing and search sit behind small functions so a local AI model
 can take them over later without a rewrite.
+
+## Rich notes and Markdown
+
+`RichMarkdown` (`lib/src/notes/rich_markdown.dart`) converts between a Rich
+note's Markdown and the Delta Quill edits.
+
+- **Reading** uses markdown_quill's parser, taught three things it didn't
+  do: images keep their alt text and title, GitHub-style tables are kept
+  whole (shown as a read-only table; switching the note to Plain edits the
+  Markdown), and `####` to `######` headings stay headings.
+- **Writing** is GPad's own, because markdown_quill's writer escaped nearly
+  all punctuation (`saved as you go\.`), dropped alt text and tables, lost
+  code block languages, and wrote a paragraph straight after a quote, which
+  Markdown then reads as part of the quote. The writer:
+  - escapes a character only where it would otherwise be read as Markdown
+    (`# ` at the start of a line, `*` and `_` that could open emphasis, `[`,
+    a backtick, `&amp;`-style entities), so `snake_case`, `C#`, `x < y` and
+    `2 * 3` stay as typed;
+  - separates blocks with a blank line, and keeps list items, quote lines
+    and code lines together;
+  - writes a link whose text is its own address as the bare address;
+  - moves spaces out of bold and italic (`**word **` doesn't parse), and
+    where a marker would touch punctuation in a way Markdown can't read
+    (`**Note:**Next`), moves that punctuation out of the bold. Lines where a
+    marker touches punctuation are parsed back as a check, and if one still
+    reads differently it is written without emphasis: formatting can be
+    lost that way, never text.
+- Formatting Markdown has no syntax for (underline, colors, fonts) is not
+  kept. The welcome note and 3,000 random lines of punctuation are tested to
+  read back as the same text.
+
+### Pasting from a web page or Word
+
+Flutter's clipboard API only reads plain text. GPad reads the clipboard's
+HTML itself: on Linux through a small GTK method channel in the runner
+(`linux/runner/clipboard_html.cc`, `text/html`, UTF-8 or UTF-16), on Windows
+through quill_native_bridge's `CF_HTML` reader, which flutter_quill already
+depends on.
+
+`markdownFromHtml` (`lib/src/notes/html_markdown.dart`) turns that HTML into
+Markdown:
+
+- Headings, paragraphs, lists (nested, and task lists), quotes, code blocks
+  (with their language when the page names it), rules, links, images, bold,
+  italic, strikethrough and inline code. Bold and italic come from tags or
+  from inline styles, which is how Google Docs marks them (it also wraps
+  everything in a `<b>` styled as not bold).
+- Word writes lists as paragraphs styled `mso-list`; those become lists,
+  and the bullet characters Word adds are dropped.
+- A table of short cells becomes a Markdown table, as from a spreadsheet.
+  A table used for layout, with paragraphs or other tables in its cells, as
+  in most emails, is read as the paragraphs it holds.
+- Hidden elements, scripts, styles, forms and tracking pixels are dropped.
+  Links keep only `http`, `https`, `mailto`, `ftp` and `tel` addresses, and
+  images only web addresses, so no `javascript:` link or local file comes
+  along. Images are shown as their alt text and address and never fetched.
+- HTML with nothing Markdown can say (only colors and fonts, or only a code
+  block) returns null, and the paste goes in as plain text. Clipboard HTML
+  over 4 MB is ignored the same way.
+
+Where HTML is used:
+
+- **Ctrl+Shift+V** and the first paste into a new note make a Rich note of
+  it (see the mode order above).
+- Pasting into a Rich note converts it the same way, so what shows is
+  exactly what is saved.
+- Pasting into Code and Plain notes, and any later paste into a note that
+  isn't Rich, uses the plain text.
 
 ## Tabs, closing and deleting
 
@@ -223,8 +283,6 @@ The choices are saved with the other settings.
   trashed ones, then notes whose title matches, then the rest by BM25.
   That order is applied before the 50-result limit, so trashed notes can't
   crowd a kept one out.
-- **Still to come in step 2:** keeping formatting when pasting from a web
-  page or Word (see paste detection above).
 
 ## Sync (step 3)
 

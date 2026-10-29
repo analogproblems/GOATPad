@@ -5,6 +5,7 @@ import '../notepad/notepad.dart';
 import '../notes/mode_detector.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
+import 'clipboard_html.dart';
 import 'note_editors.dart';
 import 'search_palette.dart';
 import 'sidebar.dart';
@@ -100,8 +101,18 @@ class NotepadScreen extends StatelessWidget {
   }
 
   Future<void> _pasteAsNewNote() async {
+    final html = await readClipboardHtml();
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    notepad.pasteAsNewNote(data?.text ?? '');
+    notepad.pasteAsNewNote(data?.text ?? '', html: html);
+  }
+
+  /// The first paste into a new note keeps the clipboard's formatting, if
+  /// it has any, by making the note Rich. Returns false to paste plain text.
+  Future<bool> _pasteFirst(Note note) async {
+    final html = await readClipboardHtml();
+    if (html == null) return false;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    return notepad.pasteFormatted(note, text: data?.text ?? '', html: html);
   }
 
   /// Stays up while saves are failing, so nobody stops typing believing
@@ -166,6 +177,7 @@ class NotepadScreen extends StatelessWidget {
         text: note.text,
         guess: note.guess,
         onChanged: onChanged,
+        onPaste: note.awaitingFirstPaste ? () => _pasteFirst(note) : null,
       );
     }
     return QuillNoteEditor(key: key, markdown: note.text, onChanged: onChanged);

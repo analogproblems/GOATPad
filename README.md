@@ -12,14 +12,15 @@ waiting in a tab on your Linux machine at home.
 
 ## Status
 
-Early. Step 2, the local notepad, is nearly done: notes are saved as you
-type, your tabs come back when you reopen GPad, folders double as tab
-groups, and Ctrl+P searches everything. Sync is next.
+Early. Step 2, the local notepad, is done: notes are saved as you type,
+your tabs come back when you reopen GPad, folders double as tab groups,
+Ctrl+P searches everything, and pasting from a web page or Word keeps the
+formatting. Sync is next.
 
 | Step | What it delivers | State |
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
-| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | In progress: saving, restore, trash, settings, folders and search are in; keeping formatting when pasting from web pages next |
+| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
 | 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
@@ -30,6 +31,9 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 - **Smart modes.** Each note is Rich (Markdown underneath), Code (syntax
   highlighted) or Plain, picked automatically from what you first paste and
   changeable with one click.
+- **Paste keeps its formatting.** Copy from a web page, Word or Google Docs
+  and the headings, lists, links and tables arrive as a Rich note, stored as
+  clean Markdown.
 - **Nothing lost.** No save prompts. Closing a tab keeps the note, marked
   closed, so tabs stay tidy without throwing anything away.
 - **Folders are tab groups.** Open notes are grouped in the tab strip by the
@@ -51,7 +55,9 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
    tab joins the folder's group; click the group's label to fold it away.
 5. Press Ctrl+P and type part of any word. Closed and trashed notes turn up
    too.
-6. Open **Appearance** (the palette button) to try the themes and code
+6. Copy part of a web page and press Ctrl+Shift+V. The formatting comes with
+   it; switch the note to Plain to see the Markdown underneath.
+7. Open **Appearance** (the palette button) to try the themes and code
    colors. GPad remembers your choice.
 
 ## Where your notes are
