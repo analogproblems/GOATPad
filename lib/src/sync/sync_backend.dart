@@ -34,14 +34,35 @@ class SyncBackendException implements Exception {
   String toString() => 'SyncBackendException: $message';
 }
 
+/// Thrown when a file in the remote store is bigger than GPad ever writes,
+/// which only a damaged or hostile store would hold. GPad doesn't read it
+/// all, so it can't fill the memory.
+class FileTooLarge extends SyncBackendException {
+  const FileTooLarge(String name)
+    : super('$name is too large to be one of GPad\'s files');
+}
+
 /// Where synced notes are kept: a vault file and one encrypted file per
 /// note or folder. GPad never sends anything else, and never anything
 /// unencrypted but the vault file, which holds only encrypted keys.
 abstract interface class SyncBackend {
+  /// The most of a record file GPad reads, far past any note its editors
+  /// can open. A bigger one reads as [FileTooLarge].
+  static const maxRecordBytes = 128 << 20;
+
+  /// The most of the vault file GPad reads. GPad's are under 1 KB.
+  static const maxVaultBytes = 64 << 10;
+
+  /// The most of a record file this store takes: [maxRecordBytes], unless
+  /// a test lowers it. GPad reads no more of one, and so writes none
+  /// bigger: other computers couldn't read it.
+  int get recordLimit;
+
   /// Where the notes go, for people to read, like a folder's path.
   String get description;
 
-  /// The vault file, or null if there isn't one yet.
+  /// The vault file, or null if there isn't one yet. Throws [FileTooLarge]
+  /// for one over [maxVaultBytes].
   Future<Uint8List?> readVault();
 
   /// Writes the vault file, unless there already is one. Returns false,
@@ -60,6 +81,8 @@ abstract interface class SyncBackend {
   /// Every record file, including copies made by other sync tools.
   Future<List<RemoteFile>> list();
 
+  /// The contents of [file]. Throws [FileTooLarge] for one over
+  /// [maxRecordBytes].
   Future<Uint8List> read(RemoteFile file);
 
   /// Writes the record's own file, replacing it whole, and returns it with

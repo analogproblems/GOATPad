@@ -53,6 +53,13 @@ class FolderBackend implements SyncBackend {
   @visibleForTesting
   bool Function(String source, String target) moveVault = moveNoReplace;
 
+  @override
+  int recordLimit = SyncBackend.maxRecordBytes;
+
+  /// The most of the vault file GPad reads; tests lower it.
+  @visibleForTesting
+  int vaultLimit = SyncBackend.maxVaultBytes;
+
   Directory get _records => Directory(p.join(path, 'records'));
   File get _vault => File(p.join(path, vaultFileName));
 
@@ -64,7 +71,7 @@ class FolderBackend implements SyncBackend {
   @override
   Future<Uint8List?> readVault() => _guard(() async {
     try {
-      return await _vault.readAsBytes();
+      return await _readUpTo(_vault, vaultLimit);
     } on PathNotFoundException {
       return null;
     }
@@ -104,7 +111,7 @@ class FolderBackend implements SyncBackend {
   Future<bool> replaceVault(Uint8List old, Uint8List bytes) => _guard(() async {
     final Uint8List now;
     try {
-      now = await _vault.readAsBytes();
+      now = await _readUpTo(_vault, vaultLimit);
     } on PathNotFoundException {
       return false;
     }
@@ -136,7 +143,7 @@ class FolderBackend implements SyncBackend {
 
   @override
   Future<Uint8List> read(RemoteFile file) =>
-      _guard(() => _fileFor(file.name).readAsBytes());
+      _guard(() => _readUpTo(_fileFor(file.name), recordLimit));
 
   @override
   Future<RemoteFile> write(String recordId, Uint8List bytes) =>
@@ -214,6 +221,23 @@ class FolderBackend implements SyncBackend {
         // Nothing to clean up.
       }
       rethrow;
+    }
+  }
+
+  /// The contents of [file], unless it holds more than [limit] bytes: then
+  /// throws [FileTooLarge], having read no more than that.
+  static Future<Uint8List> _readUpTo(File file, int limit) async {
+    final opened = await file.open();
+    try {
+      final bytes = BytesBuilder(copy: false);
+      while (bytes.length <= limit) {
+        final chunk = await opened.read(min(1 << 20, limit + 1 - bytes.length));
+        if (chunk.isEmpty) return bytes.takeBytes();
+        bytes.add(chunk);
+      }
+      throw FileTooLarge(p.basename(file.path));
+    } finally {
+      await opened.close();
     }
   }
 

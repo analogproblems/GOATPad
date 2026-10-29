@@ -103,6 +103,37 @@ void main() {
     });
   });
 
+  test('files over the size limit aren\'t read', () async {
+    final backend = FolderBackend(p.join(dir.path, 'GPad'));
+    final header = Uint8List(100);
+    expect(await backend.createVault(header), isTrue);
+    backend.vaultLimit = 99;
+    await expectLater(backend.readVault(), throwsA(isA<FileTooLarge>()));
+    await expectLater(
+      backend.replaceVault(header, Uint8List(1)),
+      throwsA(isA<FileTooLarge>()),
+    );
+    backend.vaultLimit = 100;
+    expect(await backend.readVault(), header);
+
+    final id = 'a' * 32;
+    // Bigger than one read, to check the reads add up.
+    final written = await backend.write(id, Uint8List((3 << 20) + 1));
+    backend.recordLimit = 3 << 20;
+    await expectLater(
+      backend.read(written),
+      throwsA(
+        isA<FileTooLarge>().having(
+          (e) => e.message,
+          'message',
+          contains('$id.gpad'),
+        ),
+      ),
+    );
+    backend.recordLimit = (3 << 20) + 1;
+    expect(await backend.read(written), hasLength((3 << 20) + 1));
+  });
+
   test('a move that refuses to replace', () {
     final a = File(p.join(dir.path, 'a'))..writeAsStringSync('a');
     final b = p.join(dir.path, 'b');

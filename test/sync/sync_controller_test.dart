@@ -45,6 +45,7 @@ void main() {
     String host = 'work-pc',
     _Gate? gate,
     bool watch = true,
+    int? recordLimit,
   }) {
     final controller = SyncController(
       notepad,
@@ -53,7 +54,9 @@ void main() {
       uploadDelay: const Duration(milliseconds: 20),
       maxWait: const Duration(milliseconds: 200),
       hostName: host,
-      backendFor: gate == null && watch
+      backendFor: recordLimit != null
+          ? (folder) => FolderBackend(folder)..recordLimit = recordLimit
+          : gate == null && watch
           ? null
           : (folder) => _GatedBackend(
               FolderBackend(folder),
@@ -85,8 +88,14 @@ void main() {
     Notepad notepad, {
     Keychain? keychain,
     bool watch = true,
+    int? recordLimit,
   }) async {
-    final sync = controllerFor(notepad, keychain: keychain, watch: watch);
+    final sync = controllerFor(
+      notepad,
+      keychain: keychain,
+      watch: watch,
+      recordLimit: recordLimit,
+    );
     final checked = await sync.checkFolder(chosen);
     expect((checked.place as FolderPlace).path, p.join(chosen, 'GPad'));
     expect(checked.vault, isNull);
@@ -408,6 +417,22 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  test('a note too large to sync is named', () async {
+    final work = Notepad.load(NoteStore.inMemory());
+    final sync = await setUpFirst(work, recordLimit: 4096);
+    expect(sync.tooLarge, isEmpty);
+    final note = work.newNote();
+    work.editText(note, 'x' * 5000);
+    work.rename(note, 'Server log');
+    await sync.syncNow();
+    expect(sync.status, SyncStatus.synced);
+    expect(sync.tooLarge, ['Server log']);
+
+    work.editText(note, 'x' * 100);
+    await sync.syncNow();
+    expect(sync.tooLarge, isEmpty);
   });
 
   group('changing the passphrase or recovery key', () {
@@ -753,6 +778,8 @@ class _GatedBackend implements SyncBackend {
 
   @override
   String get description => inner.description;
+  @override
+  int get recordLimit => inner.recordLimit;
   @override
   Future<Uint8List?> readVault() => inner.readVault();
   @override

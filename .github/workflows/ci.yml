@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+# Actions are pinned to commits, since a tag can be moved to other code,
+# and Dependabot proposes updates. Checkouts keep no GitHub token, so
+# nothing a build runs can use it.
 permissions:
   contents: read
 
@@ -20,8 +23,10 @@ jobs:
     name: Format, analyze and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -57,8 +62,10 @@ jobs:
             ca-certificates curl git unzip xz-utils zip file jq dpkg-dev make \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -77,18 +84,18 @@ jobs:
           --dart-define=GPAD_GOOGLE_CLIENT_SECRET="$GPAD_GOOGLE_CLIENT_SECRET"
       - name: Package .deb and AppImage
         run: linux/packaging/package.sh dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gpad-linux-x64
           path: build/linux/x64/release/bundle
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gpad-linux-deb
           path: dist/*.deb
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gpad-linux-appimage
           path: dist/*.AppImage
@@ -104,12 +111,14 @@ jobs:
       matrix:
         image: [ubuntu:22.04, ubuntu:24.04, debian:12, fedora:latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: gpad-linux-deb
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: gpad-linux-appimage
           path: dist
@@ -123,8 +132,10 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -152,7 +163,7 @@ jobs:
             Copy-Item -Path "$env:WINDIR\System32\$dll" -Destination $release -ErrorAction Stop
           }
           Get-ChildItem $release -Filter *.dll | Format-Table Name, Length
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gpad-windows-x64
           path: build/windows/x64/runner/Release

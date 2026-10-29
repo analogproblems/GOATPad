@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,8 @@ import 'package:goatpad/src/sync/google_auth.dart';
 import 'package:goatpad/src/sync/sync_backend.dart';
 import 'package:goatpad/src/sync/sync_engine.dart';
 import 'package:goatpad/src/sync/vault.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'fake_drive.dart';
 
@@ -147,14 +150,75 @@ void main() {
         appProperties: {'gpad': 'record'},
         content: content,
       );
-      expect(await calls.download(file.id), content);
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        content,
+      );
       final updated = await calls.update(file.id, bytes('new'));
       expect(updated!.headRevisionId, isNot(file.headRevisionId));
-      expect(await calls.download(file.id), bytes('new'));
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        bytes('new'),
+      );
       await calls.delete(file.id);
-      expect(await calls.download(file.id), isNull);
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        isNull,
+      );
       expect(await calls.update(file.id, bytes('x')), isNull);
       expect(await calls.get(file.id), isNull);
+    });
+
+    test('a download stops reading once past its size limit', () async {
+      var sent = 0;
+      Stream<List<int>> endless() async* {
+        while (true) {
+          sent++;
+          yield List.filled(100, 0);
+        }
+      }
+
+      final client = MockClient.streaming((request, _) async {
+        if (request.url.host == 'oauth2.googleapis.com') {
+          final token = {'access_token': 'a', 'expires_in': 3600};
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(jsonEncode(token))),
+            200,
+          );
+        }
+        return http.StreamedResponse(endless(), 200);
+      });
+      final auth = GoogleAuth(
+        FakeDrive.ownClient,
+        'refresh',
+        httpClient: client,
+      );
+      final calls = DriveApi(() => auth, httpClient: client);
+      await expectLater(
+        calls.download('f', name: 'r.gpad', maxBytes: 1000),
+        throwsA(isA<FileTooLarge>()),
+      );
+      // Eleven chunks pass the limit; a few more may be on their way.
+      expect(sent, inInclusiveRange(11, 20));
+    });
+
+    test('a download over its size limit names the file', () async {
+      final calls = api();
+      final file = await calls.create(
+        name: 'r.gpad',
+        appProperties: {'gpad': 'record'},
+        content: Uint8List(301),
+      );
+      await expectLater(
+        calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        throwsA(
+          isA<FileTooLarge>().having(
+            (e) => e.message,
+            'message',
+            contains('r.gpad'),
+          ),
+        ),
+      );
     });
   });
 
@@ -246,6 +310,14 @@ void main() {
       expect(drive.requests, ['GET /drive/v3/files']);
     });
 
+    test('a vault over the size limit isn\'t read', () async {
+      await backend().createVault(header());
+      final home = backend()..vaultLimit = header().length - 1;
+      await expectLater(home.readVault(), throwsA(isA<FileTooLarge>()));
+      home.vaultLimit = header().length;
+      expect(await home.readVault(), header());
+    });
+
     test('a vault in the bin is missing', () async {
       await backend().createVault(header());
       drive.trash(drive.tagged('folder').single.id);
@@ -274,6 +346,15 @@ void main() {
       expect(drive.tagged('record').single.parents, [
         drive.tagged('records').single.id,
       ]);
+    });
+
+    test('a file over the size limit isn\'t read', () async {
+      await work.write(record, Uint8List(101));
+      final listed = (await work.list()).single;
+      work.recordLimit = 100;
+      await expectLater(work.read(listed), throwsA(isA<FileTooLarge>()));
+      work.recordLimit = 101;
+      expect(await work.read(listed), hasLength(101));
     });
 
     test('the tag is the written version, even if replaced at once', () async {

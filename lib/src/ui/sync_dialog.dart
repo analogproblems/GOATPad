@@ -32,7 +32,9 @@ Future<void> showSyncDialog(
   SyncStatus.syncing => (icon: Icons.sync, label: 'Syncing…'),
   SyncStatus.synced => (
     icon: Icons.cloud_done_outlined,
-    label: sync.unreadable.isEmpty ? 'Synced' : 'Synced, with problems',
+    label: sync.unreadable.isEmpty && sync.tooLarge.isEmpty
+        ? 'Synced'
+        : 'Synced, with problems',
   ),
   SyncStatus.problem => (icon: Icons.sync_problem, label: 'Sync problem'),
   SyncStatus.signedOut => (icon: Icons.login, label: 'Sync paused: sign in'),
@@ -975,6 +977,15 @@ class _SyncDialogState extends State<_SyncDialog> {
           'newer GPad reads this way. Changes here to the '
           '${sync.unreadable.length == 1 ? 'note in it wait until it' : 'notes in them wait until they'} '
           'can be read: update GPad, or delete a damaged file.',
+          style: TextStyle(color: theme.colorScheme.error),
+        ),
+      ],
+      for (final title in sync.tooLarge) ...[
+        const SizedBox(height: 8),
+        Text(
+          '"$title" is too large to sync: encrypted, it would be over '
+          '${SyncBackend.maxRecordBytes >> 20} MB, more than GPad reads. It '
+          'stays on this computer, and its changes sync once it is smaller.',
           style: TextStyle(color: theme.colorScheme.error),
         ),
       ],

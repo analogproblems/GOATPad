@@ -36,9 +36,14 @@ class SyncReport {
   /// Notes changed here and on another machine at once, now kept twice.
   int conflicts = 0;
 
-  /// Files that couldn't be opened: changed, damaged, from another vault
-  /// or from a newer GPad. They are left alone.
+  /// Files that couldn't be opened: changed, damaged, too large, from
+  /// another vault or from a newer GPad. They are left alone.
   final unreadable = <String>[];
+
+  /// Notes too large to sync, by id: encrypted, they would be bigger than
+  /// other computers read. Changes to them wait here until they are
+  /// smaller.
+  final tooLarge = <String>[];
 }
 
 /// Brings the notes here and in the remote store in step.
@@ -69,6 +74,11 @@ class SyncEngine {
   /// Files that couldn't be opened, by name, with their tags, so they are
   /// read again only if they change.
   final _unreadable = <String, String?>{};
+
+  /// Notes found too large to upload, with how far they had been changed
+  /// here and which version they were, so they are encrypted again only
+  /// once either changes.
+  final _tooLarge = <String, (int, String?)>{};
 
   bool _cancelled = false;
 
@@ -140,6 +150,9 @@ class SyncEngine {
           unreadable();
           continue;
         } on VaultException {
+          unreadable();
+          continue;
+        } on FileTooLarge {
           unreadable();
           continue;
         }
@@ -376,6 +389,8 @@ class SyncEngine {
     if (copy != null) report?.conflicts++;
   }
 
+  /// Uploads what changed here, except records in [blocked], and adds to
+  /// it records that can't go up, so their copies stay.
   Future<void> _upload(SyncReport report, Set<String> blocked) async {
     _flush();
     for (final state in _store.pendingSync()) {
@@ -403,9 +418,24 @@ class SyncEngine {
         savedAt: clock(),
       );
       final seq = state.localSeq;
-      final file = await _step(
-        backend.write(state.id, vault.seal(state.id, record.encode())),
-      );
+      final seen = (seq, state.version);
+      if (_tooLarge[state.id] == seen) {
+        report.tooLarge.add(state.id);
+        blocked.add(state.id);
+        continue;
+      }
+      final sealed = vault.seal(state.id, record.encode());
+      // Other computers would refuse it, so it doesn't go up. The file
+      // already there stays as it is, and so do copies other tools made of
+      // it, which may hold changes merged here that only they carry.
+      if (sealed.length > backend.recordLimit) {
+        _tooLarge[state.id] = seen;
+        report.tooLarge.add(state.id);
+        blocked.add(state.id);
+        continue;
+      }
+      _tooLarge.remove(state.id);
+      final file = await _step(backend.write(state.id, sealed));
       // If it changed while it was being written, it stays pending, and the
       // next round uploads it again.
       _store.saveSyncState(
