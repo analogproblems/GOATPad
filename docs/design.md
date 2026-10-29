@@ -340,10 +340,11 @@ GPad/
   touch the same file. Writes go to a temporary file that is then renamed,
   so a sync tool never uploads half a file. The vault file is put in
   place by a move that refuses to replace a file already there (a hard
-  link on Linux, `MoveFileEx` without replacing on Windows; where neither
-  works, like a FAT USB stick, an exclusive create), so of two computers
-  setting up one shared folder at once, only one can win, however long
-  either takes.
+  link on Linux, `MoveFileEx` without replacing on Windows), so of two
+  computers setting up one shared folder at once, only one can win,
+  however long either takes. A drive that can't do that, like a FAT USB
+  stick, can't be set up, rather than risk a half-written vault file;
+  a GPad folder set up elsewhere and copied there can be joined.
 - **A record** is JSON inside the encryption: kind, id, a version vector,
   the device that saved it and its name, when, and the data (or nothing,
   for a delete, which is kept so other machines learn about it).

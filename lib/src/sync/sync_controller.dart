@@ -205,8 +205,15 @@ class SyncController extends ChangeNotifier {
     required bool remember,
   }) async {
     final made = await (await _vaultCrypto).create(passphrase, kdf: kdf);
-    if (!await _backendFor(folder)
-        .createVault(Uint8List.fromList(made.header.encode()))) {
+    final bool created;
+    try {
+      created = await _backendFor(folder)
+          .createVault(Uint8List.fromList(made.header.encode()));
+    } catch (_) {
+      made.vault.dispose();
+      rethrow;
+    }
+    if (!created) {
       made.vault.dispose();
       throw const SyncBackendException(
         'Another computer just started syncing there. Choose the folder '

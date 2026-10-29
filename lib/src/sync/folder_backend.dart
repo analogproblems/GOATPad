@@ -48,10 +48,10 @@ class FolderBackend implements SyncBackend {
   @visibleForTesting
   Future<void> Function()? beforePublish;
 
-  /// Whether to put a new vault in place with [moveNoReplace]; tests turn
-  /// it off to check the way used where that isn't possible.
+  /// How a new vault file is put in place; tests swap it to act out a
+  /// drive that can't do it without replacing.
   @visibleForTesting
-  bool noReplaceMoves = true;
+  bool Function(String source, String target) moveVault = moveNoReplace;
 
   Directory get _records => Directory(p.join(path, 'records'));
   File get _vault => File(p.join(path, vaultFileName));
@@ -82,11 +82,15 @@ class FolderBackend implements SyncBackend {
       // long since the check above: of two computers setting up one
       // folder, only one wins, and nobody reads half a header.
       try {
-        if (noReplaceMoves) return moveNoReplace(temp.path, _vault.path);
+        return moveVault(temp.path, _vault.path);
       } on UnsupportedError {
-        // No hard links here, like on a FAT USB stick.
+        throw const SyncBackendException(
+          'GPad can\'t set sync up on this drive safely: it can\'t put a '
+          'file in place without risking replacing one, like FAT and exFAT '
+          'drives, which many USB sticks are. Set sync up in a folder on '
+          'another drive, then copy its GPad folder here and choose that.',
+        );
       }
-      return await _createAndFill(_vault, bytes);
     } finally {
       try {
         await temp.delete();
@@ -95,24 +99,6 @@ class FolderBackend implements SyncBackend {
       }
     }
   });
-
-  /// Where a file can't be moved into place without replacing: creates
-  /// [file] exclusively, which also never replaces, and fills it.
-  Future<bool> _createAndFill(File file, Uint8List bytes) async {
-    try {
-      await file.create(exclusive: true);
-    } on FileSystemException {
-      if (await file.exists()) return false;
-      rethrow;
-    }
-    try {
-      await file.writeAsBytes(bytes, flush: true);
-    } catch (_) {
-      await file.delete();
-      rethrow;
-    }
-    return true;
-  }
 
   @override
   Future<List<RemoteFile>> list() => _guard(() async {
