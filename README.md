@@ -136,19 +136,28 @@ build GPad with your client inside, pass
 `--dart-define=GPAD_GOOGLE_CLIENT_ID=… --dart-define=GPAD_GOOGLE_CLIENT_SECRET=…`
 to `flutter build` or `flutter run`.
 
-## Download a test build
+## Download
 
-Builds from CI are attached to each run under **Actions → CI → Artifacts**.
-GitHub wraps each one in a zip, so unzip it first.
+Get GPad from [Releases](https://github.com/analogproblems/GOATPad/releases):
 
-- **Windows:** `gpad-windows-x64`. Unzip and run `gpad.exe`. No installer or
-  admin rights needed.
-- **Debian or Ubuntu:** `gpad-linux-deb`. Install with
-  `sudo apt install ./gpad_0.1.0_amd64.deb`, then open GPad from the app menu
-  or run `gpad`.
-- **Any Linux (AppImage):** `gpad-linux-appimage`. Make it executable with
-  `chmod +x GPad-0.1.0-x86_64.AppImage` and run it. If it says FUSE is
-  missing, install `fuse3` or start it with `--appimage-extract-and-run`.
+- **Windows 10 or 11:** `GPad-<version>-windows-x64.zip`. Unzip it anywhere
+  and run `gpad.exe` in the `GPad` folder. No installer or admin rights
+  needed.
+- **Debian 12, Ubuntu 22.04 or newer:** `gpad_<version>_amd64.deb`. Install
+  it with `sudo apt install ./gpad_<version>_amd64.deb`, then open GPad from
+  the app menu or run `gpad`.
+- **Other Linux, like Fedora:** `GPad-<version>-x86_64.AppImage`. Make it
+  executable (`chmod +x`) and run it. If it says FUSE is missing, install
+  `fuse3` or start it with `--appimage-extract-and-run`.
+
+To check a download, see [docs/releasing.md](docs/releasing.md#checking-a-download).
+
+### Test builds
+
+Builds of every change are attached to its CI run under **Actions → CI →
+Artifacts**: `gpad-windows-x64` (the Windows folder, unzipped),
+`gpad-linux-deb` and `gpad-linux-appimage`. GitHub wraps each one in a zip,
+so unzip it first, then use it as above.
 
 The Linux builds run on Ubuntu 22.04, Debian 12 and anything newer, and on
 current Fedora. CI installs and starts them on each of those.

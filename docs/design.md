@@ -646,7 +646,12 @@ of scope above.
   then installs and starts both packages in clean Ubuntu 22.04 and 24.04,
   Debian 12 and Fedora containers. Both use the system's GTK 3 and EGL.
   Flatpak can come later.
-- GitHub Releases built by CI. No telemetry.
+- GitHub Releases built by CI. Pushing a version tag on `main` runs the
+  whole of CI again, without caches, then drafts a release with the Windows
+  zip, the .deb, the AppImage, their SHA-256 sums and a signed build
+  attestation for each. A maintainer publishes the draft. The tag must
+  match `pubspec.yaml` and have a section in `CHANGELOG.md`, which becomes
+  the notes. See [releasing.md](releasing.md). No telemetry.
 - Updates: GPad updates itself from GitHub Releases, checking a signature
   made by CI before it replaces anything (Jason chose this over only telling
   people a new version is out). The AppImage and the Windows zip replace

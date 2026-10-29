@@ -1,9 +1,14 @@
 name: CI
 
+# Pushing a version tag, like v0.1.0, also drafts a GitHub release from
+# the builds. Running it by hand on a branch is a dry run: the release is
+# put together as an artifact instead. See docs/releasing.md.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 # Actions are pinned to commits, since a tag can be moved to other code,
 # and Dependabot proposes updates. Checkouts keep no GitHub token, so
@@ -30,7 +35,8 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
+          # Release builds start clean: a cache can be filled by any branch.
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
@@ -69,7 +75,8 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
+          # Release builds start clean: a cache can be filled by any branch.
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # GPad's Google sign-in client, for syncing through Drive. Google
       # treats a desktop app's client secret as public, so it ships in the
       # app; it lives in secrets only to stay out of the repo. Builds
@@ -139,7 +146,8 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
+          # Release builds start clean: a cache can be filled by any branch.
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Sync's files, folder watching and Credential Manager behave
       # differently on Windows, so its tests run here too.
       - run: flutter test test/sync
@@ -168,3 +176,65 @@ jobs:
           name: gpad-windows-x64
           path: build/windows/x64/runner/Release
           retention-days: 14
+
+  release:
+    name: Draft the release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [smoke-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to draft the release
+      id-token: write # to sign the build attestation
+      attestations: write
+    env:
+      DRY_RUN: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Only what is on main gets released, so every release went through
+      # review and CI first.
+      - name: Check the tag is on main
+        if: env.DRY_RUN == 'false'
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD ||
+            { echo "::error::$GITHUB_REF_NAME isn't on main"; exit 1; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: builds
+      # A dry run takes the tag the version in pubspec.yaml would have.
+      - name: Put the downloads together
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [ "$DRY_RUN" = true ]; then
+            tag="v$(sed -n 's/^version: *\([0-9][0-9.]*\).*/\1/p' pubspec.yaml)"
+          fi
+          tool/prepare_release.sh "$tag" builds release notes.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: env.DRY_RUN == 'true'
+        with:
+          name: release-dry-run
+          path: |
+            release
+            notes.md
+          retention-days: 7
+      # Lets anyone check a download was built here, from this tag:
+      # gh attestation verify FILE --repo analogproblems/GOATPad
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.DRY_RUN == 'false'
+        with:
+          subject-path: release/*
+      # A draft, which only the repository's maintainers see until one of
+      # them publishes it.
+      - name: Draft the release
+        if: env.DRY_RUN == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" release/*
+          --repo "$GITHUB_REPOSITORY"
+          --draft --verify-tag
+          --title "GPad ${GITHUB_REF_NAME#v}"
+          --notes-file notes.md
