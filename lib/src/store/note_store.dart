@@ -1,9 +1,12 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../notes/folder.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
+import 'search_fold.dart';
 
 /// Another GPad window already has the notes open.
 class StoreLockedException implements Exception {
@@ -21,6 +24,15 @@ class StoreLockedException implements Exception {
 /// a millisecond, and the notepad batches keystrokes before saving.
 class NoteStore {
   NoteStore._(this._db) {
+    _db.createFunction(
+      functionName: 'gpad_fold',
+      argumentCount: const AllowedArgumentCount(1),
+      deterministic: true,
+      function: (args) => switch (args[0]) {
+        final String text => foldForSearch(text),
+        final other => other,
+      },
+    );
     _migrate();
     _saveNote = _db.prepare(_upsertNote, persistent: true);
     _saveFolder = _db.prepare(_upsertFolder, persistent: true);
@@ -128,7 +140,7 @@ class NoteStore {
           CREATE VIRTUAL TABLE notes_fts USING fts5(
             title, body,
             content = 'notes', content_rowid = 'rowid',
-            tokenize = 'trigram remove_diacritics 1'
+            tokenize = 'trigram remove_diacritics 2'
           );
           CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN
             INSERT INTO notes_fts (rowid, title, body)
@@ -286,33 +298,42 @@ class NoteStore {
   });
 
   /// Notes whose title or text contain every word of [query], best match
-  /// first: notes whose title matches, then the rest. Matching ignores case
-  /// and accents.
+  /// first: kept notes before trashed ones, then notes whose title matches,
+  /// then the rest. Matching ignores case and accents.
   List<SearchHit> search(String query, {int limit = 50}) {
     final words = query.trim().split(RegExp(r'\s+'))
       ..removeWhere((w) => w.isEmpty);
     if (words.isEmpty) return const [];
     // Trigrams need three characters. Shorter words are looked for in a
-    // plain scan, which is fine at notepad sizes.
+    // plain scan, which is fine at notepad sizes. It folds case and accents
+    // the way the index does, so both kinds of word match the same way.
     final indexed = [
       for (final w in words)
         if (w.runes.length >= 3) '"${w.replaceAll('"', '""')}"',
     ];
     final short = [
       for (final w in words)
-        if (w.runes.length < 3) w.toLowerCase(),
-    ];
+        if (w.runes.length < 3) foldForSearch(w),
+    ]..removeWhere((w) => w.isEmpty);
     final scan = [
       for (final _ in short)
-        "instr(lower(n.title || char(10) || n.body), ?) > 0",
+        'instr(gpad_fold(n.title || char(10) || n.body), ?) > 0',
     ];
+    // Trashed notes go last before the limit is applied, so a crowd of them
+    // can't push a kept note out of the results.
+    final trashedLast = "n.status = '${NoteStatus.trashed.name}'";
 
     if (indexed.isEmpty) {
+      if (short.isEmpty) return const [];
+      final titleMatches = [
+        for (final _ in short) 'instr(gpad_fold(n.title), ?) > 0',
+      ].join(' OR ');
       final rows = _db.select(
         'SELECT n.id, n.title, n.body FROM notes n '
         'WHERE ${scan.join(' AND ')} '
-        'ORDER BY n.updated_at DESC LIMIT ?',
-        [...short, limit],
+        'ORDER BY $trashedLast, NOT ($titleMatches), n.updated_at DESC '
+        'LIMIT ?',
+        [...short, ...short, limit],
       );
       return [
         for (final row in rows)
@@ -333,7 +354,8 @@ class NoteStore {
       "snippet(notes_fts, 1, char(2), char(3), '…', 64) AS snippet "
       'FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid '
       'WHERE notes_fts MATCH ? ${[for (final c in scan) 'AND $c '].join()}'
-      'ORDER BY instr(marked_title, char(2)) = 0, bm25(notes_fts) LIMIT ?',
+      'ORDER BY $trashedLast, instr(marked_title, char(2)) = 0, '
+      'bm25(notes_fts) LIMIT ?',
       [indexed.join(' AND '), ...short, limit],
     );
     return [
@@ -382,32 +404,57 @@ class NoteStore {
 
   static DateTime _time(int ms) => DateTime.fromMillisecondsSinceEpoch(ms);
 
-  /// [text] with the first place each of [words] appears marked.
+  /// [text] with the first place each of [words] appears marked. The words
+  /// are folded with [foldForSearch], and so is [text] to find them, but
+  /// the marks go around the text as it was written, accents and all.
   static String _mark(String text, List<String> words) {
-    var marked = text;
+    final sources = <int>[];
+    final folded = foldForSearch(text, sources);
+    final ranges = <(int, int)>[];
     for (final word in words) {
-      final at = marked.toLowerCase().indexOf(word);
-      final end = at + word.length;
-      // Lowercasing a few letters changes their length; skip the mark then.
-      if (at < 0 || end > marked.length) continue;
-      marked =
-          '${marked.substring(0, at)}${SearchHit.markStart}'
-          '${marked.substring(at, end)}${SearchHit.markEnd}'
-          '${marked.substring(end)}';
+      final at = folded.indexOf(word);
+      if (at < 0) continue;
+      var end = sources[at + word.length - 1] + 1;
+      // Keep accents typed as separate marks with their letter.
+      while (end < text.length && isCombiningMark(text.codeUnitAt(end))) {
+        end++;
+      }
+      ranges.add((sources[at], end));
     }
-    return marked;
+    ranges.sort((a, b) => a.$1.compareTo(b.$1));
+
+    final marked = StringBuffer();
+    var done = 0;
+    for (var i = 0; i < ranges.length; i++) {
+      var (start, end) = ranges[i];
+      // Overlapping matches share one mark.
+      while (i + 1 < ranges.length && ranges[i + 1].$1 <= end) {
+        end = max(end, ranges[++i].$2);
+      }
+      marked
+        ..write(text.substring(done, start))
+        ..write(SearchHit.markStart)
+        ..write(text.substring(start, end))
+        ..write(SearchHit.markEnd);
+      done = end;
+    }
+    return (marked..write(text.substring(done))).toString();
   }
 
   /// About 60 characters of [body] around the first of [words] it holds,
   /// marked like FTS5's snippet().
   static String? _snippet(String body, List<String> words) {
-    final lower = body.toLowerCase();
-    final at = words
-        .map(lower.indexOf)
-        .where((i) => i >= 0)
-        .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
-    if (at == null) return body.isEmpty ? null : _cut(body, 0);
-    return _mark(_cut(body, at), words);
+    if (body.isEmpty) return null;
+    final sources = <int>[];
+    final folded = foldForSearch(body, sources);
+    int? first;
+    for (final word in words) {
+      final at = folded.indexOf(word);
+      if (at >= 0 && (first == null || sources[at] < first)) {
+        first = sources[at];
+      }
+    }
+    return _mark(_cut(body, first ?? 0), words);
   }
 
   static String _cut(String text, int at) {

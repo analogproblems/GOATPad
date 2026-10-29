@@ -259,6 +259,30 @@ void main() {
       expect(ids('  '), isEmpty);
     });
 
+    test('short words ignore case and accents too, alone or mixed', () {
+      store.saveNote(_note(id: 'oil', text: 'Motor ÖL, 5 Liter'));
+      expect(ids('öl'), ['oil']);
+      expect(ids('Ol'), ['oil']);
+      expect(ids('fe'), unorderedEquals(['menu', 'sql']));
+      expect(ids('motor öl'), ['oil']);
+      expect(ids('crème FE'), ['menu']);
+      expect(ids('crème öl'), isEmpty);
+    });
+
+    test('marks short words where they are, however they were written', () {
+      store.saveNote(
+        _note(id: 'trip', text: 'Ask about the cafe\u0301 au lait')
+          ..title = 'İstanbul trip',
+      );
+      final hit = store.search('is fe au').single;
+      final (start, end) = (SearchHit.markStart, SearchHit.markEnd);
+      expect(hit.title, '$start\u0130s${end}tanbul trip');
+      expect(
+        hit.snippet,
+        'Ask about the ca${start}fe\u0301$end ${start}au$end lait',
+      );
+    });
+
     test('follows edits and deletions', () {
       store.saveNote(_note(id: 'menu', text: 'Tea and scones'));
       expect(ids('croissant'), isEmpty);
@@ -267,6 +291,25 @@ void main() {
       store.deleteNotes(['menu']);
       expect(ids('scones'), isEmpty);
     });
+  });
+
+  test('a crowd of trashed matches never hides a kept note', () {
+    final store = NoteStore.inMemory();
+    addTearDown(store.close);
+    store.saveNotes([
+      for (var i = 0; i < 60; i++)
+        _note(id: 't$i', text: 'ok', status: NoteStatus.trashed)
+          ..title = 'Milk $i'
+          ..updatedAt = DateTime(2026, 10, 29, 12, i),
+    ]);
+    // Matches only in its text, and is the oldest: last but for the trash.
+    store.saveNote(_note(id: 'kept', text: 'Buy milk, ok?'));
+
+    for (final query in ['milk', 'ok']) {
+      final hits = store.search(query);
+      expect(hits, hasLength(50));
+      expect(hits.first.noteId, 'kept', reason: query);
+    }
   });
 
   test('upgrading from folders indexes the notes already there', () {

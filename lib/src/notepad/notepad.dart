@@ -207,13 +207,11 @@ class Notepad extends ChangeNotifier {
     // Search what was typed in the last moment too.
     flush();
     final byId = {for (final note in _notes) note.id: note};
-    final results = [
+    return [
       for (final hit in _store.search(query))
         if (byId[hit.noteId] case final note?)
           SearchResult(note, title: hit.title, snippet: hit.snippet),
     ];
-    bool trashed(SearchResult r) => r.note.status == NoteStatus.trashed;
-    return [...results.where((r) => !trashed(r)), ...results.where(trashed)];
   }
 
   /// Why the latest changes couldn't be saved, or null if everything is
