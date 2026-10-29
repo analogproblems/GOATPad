@@ -635,6 +635,48 @@ void main() {
       );
     });
 
+    test('a vault file with boxes of the wrong size stops sync', () async {
+      final work = Notepad.load(NoteStore.inMemory());
+      final note = work.newNote();
+      work.editText(note, 'kept');
+      final sync = await setUpFirst(work);
+      final good = vaultFile(sync).readAsStringSync();
+      final records = Directory(
+        p.join((sync.config!.place as FolderPlace).path, 'records'),
+      );
+      Map<String, List<int>> written() => {
+        for (final f in records.listSync().whereType<File>())
+          p.basename(f.path): f.readAsBytesSync(),
+      };
+
+      for (final damage in <void Function(Map<String, Object?>)>[
+        (j) => (j['check'] as Map)['nonce'] = '',
+        (j) => (j['check'] as Map)['nonce'] = base64.encode(List.filled(23, 0)),
+        (j) => (j['check'] as Map)['box'] = base64.encode(List.filled(15, 0)),
+      ]) {
+        final json = jsonDecode(good) as Map<String, Object?>;
+        damage(json);
+        vaultFile(sync).writeAsStringSync(jsonEncode(json));
+        final before = written();
+        work.editText(note, '${note.text}, edited');
+        await sync.syncNow();
+        expect(sync.status, SyncStatus.problem, reason: jsonEncode(json));
+        expect(sync.problem, contains('The vault file in'));
+        expect(written(), before);
+        await expectLater(
+          sync.changePassphrase(
+            passphrase: passphrase,
+            newPassphrase: newPassphrase,
+          ),
+          throwsA(isA<SyncException>()),
+        );
+
+        vaultFile(sync).writeAsStringSync(good);
+        await sync.syncNow();
+        expect(sync.status, SyncStatus.synced);
+      }
+    });
+
     test(
       'a vault file this computer\'s key doesn\'t open stops sync',
       () async {

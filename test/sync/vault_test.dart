@@ -190,6 +190,21 @@ void main() {
       edited((j) => (j['kdf'] as Map)['alg'] = 'pbkdf2'),
       edited((j) => j['id'] = '../escape'),
       edited((j) => j.remove('recovery')),
+      // Sizes libsodium would refuse with a RangeError.
+      edited((j) => (j['kdf'] as Map)['salt'] = base64.encode([1, 2, 3])),
+      for (final box in ['passphrase', 'recovery', 'check']) ...[
+        edited((j) => (j[box] as Map)['nonce'] = ''),
+        edited(
+          (j) => (j[box] as Map)['nonce'] = base64.encode(List.filled(23, 0)),
+        ),
+        edited(
+          (j) => (j[box] as Map)['box'] = base64.encode(List.filled(15, 0)),
+        ),
+        edited((j) {
+          final sealed = base64.decode((j[box] as Map)['box'] as String);
+          (j[box] as Map)['box'] = base64.encode([...sealed, 0]);
+        }),
+      ],
     ]) {
       expect(
         () => VaultHeader.decode(utf8.encode(jsonEncode(bad))),

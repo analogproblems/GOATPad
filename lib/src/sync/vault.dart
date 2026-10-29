@@ -84,6 +84,8 @@ class VaultHeader {
     if (id is! String || !_idPattern.hasMatch(id)) {
       throw const FormatException('Bad vault id');
     }
+    final salt = _bytes(kdf, 'salt');
+    if (salt.length != _saltBytes) throw const FormatException('Bad salt');
     return VaultHeader(
       id: id,
       createdAt: switch (json['created']) {
@@ -91,14 +93,24 @@ class VaultHeader {
         _ => throw const FormatException('Bad creation time'),
       },
       kdf: KdfParams(ops: ops, mem: mem),
-      salt: _bytes(kdf, 'salt'),
-      passphraseBox: SealedBox.fromJson(_map(json, 'passphrase')),
-      recoveryBox: SealedBox.fromJson(_map(json, 'recovery')),
-      check: SealedBox.fromJson(_map(json, 'check')),
+      salt: salt,
+      passphraseBox: _box(json, 'passphrase', _keyBytes),
+      recoveryBox: _box(json, 'recovery', _keyBytes),
+      // An empty message.
+      check: _box(json, 'check', 0),
     );
   }
 
   static const formatVersion = 1;
+
+  // Sizes in libsodium's Argon2id and XChaCha20-Poly1305, checked here
+  // since libsodium throws a RangeError, not a SodiumException, for others.
+  // VaultCrypto makes sure they match.
+  static const _saltBytes = 16;
+  static const _nonceBytes = 24;
+  static const _tagBytes = 16;
+  static const _keyBytes = 32;
+
   static final _idPattern = RegExp(r'^[0-9a-f]{32}$');
 
   /// Random, and part of every record's authenticated data, so records
@@ -131,6 +143,20 @@ class VaultHeader {
       'check': check.toJson(),
     }),
   );
+
+  /// The box under [key], sealing a message of [messageBytes].
+  static SealedBox _box(
+    Map<String, Object?> json,
+    String key,
+    int messageBytes,
+  ) {
+    final box = SealedBox.fromJson(_map(json, key));
+    if (box.nonce.length != _nonceBytes ||
+        box.sealed.length != messageBytes + _tagBytes) {
+      throw FormatException('Bad $key box');
+    }
+    return box;
+  }
 
   static Map<String, Object?> _map(Map<String, Object?> json, String key) =>
       switch (json[key]) {
@@ -288,7 +314,17 @@ class NewVault {
 /// Makes and unlocks vaults, with libsodium: Argon2id turns the passphrase
 /// into a key, and XChaCha20-Poly1305 encrypts.
 class VaultCrypto {
-  VaultCrypto(this._sodium);
+  VaultCrypto(this._sodium)
+    : assert(
+        _sodium.crypto.pwhash.saltBytes == VaultHeader._saltBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.nonceBytes ==
+                VaultHeader._nonceBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.aBytes ==
+                VaultHeader._tagBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.keyBytes ==
+                VaultHeader._keyBytes,
+        'libsodium sizes changed',
+      );
 
   static Future<VaultCrypto> load() async =>
       VaultCrypto(await SodiumSumoInit.init());
