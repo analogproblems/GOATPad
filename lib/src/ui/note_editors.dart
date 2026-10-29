@@ -10,6 +10,15 @@ import 'package:re_highlight/languages/all.dart';
 import '../notes/note_mode.dart';
 import '../theme.dart';
 
+/// Takes keyboard focus once the editor has been laid out, so a new or
+/// newly shown note is ready to type or paste into. (Quill throws if it takes
+/// focus before its first layout, which rules out plain `autofocus`.)
+void _focusAfterLayout(State state, FocusNode node) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (state.mounted) node.requestFocus();
+  });
+}
+
 /// re_editor for Code and Plain notes.
 class CodeNoteEditor extends StatefulWidget {
   const CodeNoteEditor({
@@ -30,10 +39,18 @@ class CodeNoteEditor extends StatefulWidget {
 class _CodeNoteEditorState extends State<CodeNoteEditor> {
   late final CodeLineEditingController _controller =
       CodeLineEditingController.fromText(widget.text);
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focusAfterLayout(this, _focusNode);
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -46,7 +63,7 @@ class _CodeNoteEditorState extends State<CodeNoteEditor> {
 
     return CodeEditor(
       controller: _controller,
-      autofocus: true,
+      focusNode: _focusNode,
       wordWrap: !isCode,
       onChanged: (_) => widget.onChanged(_controller.text),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -124,6 +141,8 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
     selection: const TextSelection.collapsed(offset: 0),
   );
   StreamSubscription<quill.DocChange>? _changes;
+  final _focusNode = FocusNode();
+  final _scrollController = ScrollController();
 
   quill.Document _initialDocument() {
     if (widget.markdown.trim().isEmpty) return quill.Document();
@@ -133,6 +152,7 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
   @override
   void initState() {
     super.initState();
+    _focusAfterLayout(this, _focusNode);
     _changes = _controller.document.changes.listen(
       (_) =>
           widget.onChanged(_toMarkdown.convert(_controller.document.toDelta())),
@@ -143,6 +163,8 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
   void dispose() {
     _changes?.cancel();
     _controller.dispose();
+    _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -172,7 +194,9 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
           Expanded(
             child: quill.QuillEditor.basic(
               controller: _controller,
-              // Quill throws if it takes focus before its first layout.
+              // Kept across rebuilds, which happen on every keystroke.
+              focusNode: _focusNode,
+              scrollController: _scrollController,
               config: const quill.QuillEditorConfig(
                 padding: EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                 unknownEmbedBuilder: _EmbedPlaceholderBuilder(),

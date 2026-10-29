@@ -60,6 +60,44 @@ class Appearance {
     mode: mode ?? this.mode,
     codeColors: codeColors ?? this.codeColors,
   );
+
+  Map<String, String> toJson() => {
+    'family': family.name,
+    'mode': mode.name,
+    'codeColors': codeColors.name,
+  };
+
+  /// Reads what [toJson] wrote. Anything missing or unknown, say from a newer
+  /// GPad, falls back to the default.
+  factory Appearance.fromJson(Map<String, Object?> json) {
+    T pick<T extends Enum>(List<T> values, Object? name, T fallback) {
+      for (final value in values) {
+        if (value.name == name) return value;
+      }
+      return fallback;
+    }
+
+    const defaults = Appearance();
+    return Appearance(
+      family: pick(ThemeFamily.values, json['family'], defaults.family),
+      mode: pick(ThemeMode.values, json['mode'], defaults.mode),
+      codeColors: pick(
+        CodeColors.values,
+        json['codeColors'],
+        defaults.codeColors,
+      ),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is Appearance &&
+      other.family == family &&
+      other.mode == mode &&
+      other.codeColors == codeColors;
+
+  @override
+  int get hashCode => Object.hash(family, mode, codeColors);
 }
 
 /// Syntax colors for the code editor, carried on the [ThemeData].
