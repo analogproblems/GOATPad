@@ -222,6 +222,30 @@ void main() {
       }
     });
 
+    test('the vault is replaced in place, only as it was read', () async {
+      final work = backend();
+      await work.createVault(header());
+      final changed = Uint8List.fromList(
+        (await crypto.changePassphrase(
+          made.header,
+          made.vault,
+          'changed',
+          kdf: KdfParams.insecureForTests,
+        )).encode(),
+      );
+      final file = drive.tagged('vault').single;
+
+      // Changed elsewhere since it was read.
+      expect(await work.replaceVault(changed, header()), isFalse);
+      expect(await work.replaceVault(header(), changed), isTrue);
+      expect(drive.tagged('vault').single.id, file.id);
+      expect(await backend().readVault(), changed);
+      // What it wrote is what it reads, without downloading it again.
+      drive.requests.clear();
+      expect(await work.readVault(), changed);
+      expect(drive.requests, ['GET /drive/v3/files']);
+    });
+
     test('a vault in the bin is missing', () async {
       await backend().createVault(header());
       drive.trash(drive.tagged('folder').single.id);

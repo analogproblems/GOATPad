@@ -48,6 +48,15 @@ abstract interface class SyncBackend {
   /// writing nothing, if there is.
   Future<bool> createVault(Uint8List bytes);
 
+  /// Replaces the vault file with [bytes], as when the passphrase changes,
+  /// unless it no longer holds [old]: then another computer changed it
+  /// first, and nothing is written. Returns whether it was replaced.
+  ///
+  /// Neither a folder nor Drive can replace a file only if it is unchanged,
+  /// so a change made elsewhere at the same moment can still be replaced.
+  /// Both hold the same note key, so syncing goes on either way.
+  Future<bool> replaceVault(Uint8List old, Uint8List bytes);
+
   /// Every record file, including copies made by other sync tools.
   Future<List<RemoteFile>> list();
 

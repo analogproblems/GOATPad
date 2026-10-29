@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:path/path.dart' as p;
 
 import 'move_no_replace.dart';
@@ -98,6 +98,19 @@ class FolderBackend implements SyncBackend {
         // Moved into place, or never written.
       }
     }
+  });
+
+  @override
+  Future<bool> replaceVault(Uint8List old, Uint8List bytes) => _guard(() async {
+    final Uint8List now;
+    try {
+      now = await _vault.readAsBytes();
+    } on PathNotFoundException {
+      return false;
+    }
+    if (!listEquals(now, old)) return false;
+    await _writeAtomically(_vault, bytes);
+    return true;
   });
 
   @override

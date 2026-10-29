@@ -98,6 +98,65 @@ void main() {
     },
   );
 
+  test(
+    'changing the passphrase keeps the notes and the recovery key',
+    () async {
+      final sealed = made.vault.seal('a' * 32, utf8.encode('a note'));
+      final changed = reread(
+        await crypto.changePassphrase(
+          made.header,
+          made.vault,
+          'a whole new passphrase',
+          kdf: KdfParams.insecureForTests,
+        ),
+      );
+      expect(changed.id, made.header.id);
+      expect(changed.salt, isNot(made.header.salt));
+      expect(await crypto.unlock(changed, 'correct horse battery'), isNull);
+      final vault = await crypto.unlock(changed, 'a whole new passphrase');
+      expect(vault!.open('a' * 32, sealed), utf8.encode('a note'));
+      expect(
+        crypto.unlockWithRecoveryKey(changed, made.recoveryKey),
+        isNotNull,
+      );
+      expect(made.vault.belongsTo(changed), isTrue);
+    },
+  );
+
+  test(
+    'a new recovery key replaces the old, and the passphrase stays',
+    () async {
+      final (:header, :recoveryKey) = crypto.newRecoveryKey(
+        made.header,
+        made.vault,
+      );
+      final changed = reread(header);
+      expect(recoveryKey, isNot(made.recoveryKey));
+      expect(crypto.unlockWithRecoveryKey(changed, made.recoveryKey), isNull);
+      expect(
+        crypto.unlockWithRecoveryKey(changed, recoveryKey)!.exportKey(),
+        made.vault.exportKey(),
+      );
+      expect(await crypto.unlock(changed, 'correct horse battery'), isNotNull);
+    },
+  );
+
+  test('only a vault\'s own key changes its header', () async {
+    final other = await crypto.create(
+      'another one',
+      kdf: KdfParams.insecureForTests,
+    );
+    expect(other.vault.belongsTo(made.header), isFalse);
+    expect(
+      () => crypto.newRecoveryKey(made.header, other.vault),
+      throwsArgumentError,
+    );
+    await expectLater(
+      crypto.changePassphrase(made.header, other.vault, 'x' * 12),
+      throwsArgumentError,
+    );
+  });
+
   test('padding hides most of a record\'s length', () {
     expect(Vault.pad([]).length, 256);
     expect(Vault.pad(List.filled(255, 1)).length, 256);
@@ -131,6 +190,21 @@ void main() {
       edited((j) => (j['kdf'] as Map)['alg'] = 'pbkdf2'),
       edited((j) => j['id'] = '../escape'),
       edited((j) => j.remove('recovery')),
+      // Sizes libsodium would refuse with a RangeError.
+      edited((j) => (j['kdf'] as Map)['salt'] = base64.encode([1, 2, 3])),
+      for (final box in ['passphrase', 'recovery', 'check']) ...[
+        edited((j) => (j[box] as Map)['nonce'] = ''),
+        edited(
+          (j) => (j[box] as Map)['nonce'] = base64.encode(List.filled(23, 0)),
+        ),
+        edited(
+          (j) => (j[box] as Map)['box'] = base64.encode(List.filled(15, 0)),
+        ),
+        edited((j) {
+          final sealed = base64.decode((j[box] as Map)['box'] as String);
+          (j[box] as Map)['box'] = base64.encode([...sealed, 0]);
+        }),
+      ],
     ]) {
       expect(
         () => VaultHeader.decode(utf8.encode(jsonEncode(bad))),

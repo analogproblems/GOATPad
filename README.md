@@ -22,7 +22,7 @@ that Dropbox, OneDrive, Nextcloud or Syncthing keeps in step.
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
-| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder and Google Drive done; passphrase changes and tray sync next) |
+| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder, Google Drive and passphrase changes done; tray sync next) |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
@@ -88,6 +88,14 @@ that unlocks them (not your passphrase) in the system keychain (GNOME Keyring
 or KWallet on Linux, Credential Manager on Windows); otherwise it asks for the
 passphrase each time it starts. GPad's Google sign-in goes in the keychain
 too; without one, GPad asks you to sign in again after each start.
+
+To change your passphrase, or replace a recovery key that may have been
+seen, click the sync line in the sidebar and choose **Change passphrase…**
+or **New recovery key…**. Your other computers take the change as they
+sync. The notes' own key stays the same, so someone who has the old
+passphrase and an old copy of your synced files could still open them; if
+that worries you, turn sync off on every computer and set it up again in a
+new place.
 
 GPad asks Google only for the `drive.file` permission, which lets it see the
 files it makes and nothing else in your Drive.

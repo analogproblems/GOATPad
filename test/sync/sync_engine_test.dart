@@ -689,6 +689,9 @@ class _SlowBackend implements SyncBackend {
   @override
   Future<bool> createVault(Uint8List bytes) => inner.createVault(bytes);
   @override
+  Future<bool> replaceVault(Uint8List old, Uint8List bytes) =>
+      inner.replaceVault(old, bytes);
+  @override
   Future<List<RemoteFile>> list() => inner.list();
   @override
   Future<Uint8List> read(RemoteFile file) async {

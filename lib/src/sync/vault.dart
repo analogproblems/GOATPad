@@ -84,6 +84,8 @@ class VaultHeader {
     if (id is! String || !_idPattern.hasMatch(id)) {
       throw const FormatException('Bad vault id');
     }
+    final salt = _bytes(kdf, 'salt');
+    if (salt.length != _saltBytes) throw const FormatException('Bad salt');
     return VaultHeader(
       id: id,
       createdAt: switch (json['created']) {
@@ -91,14 +93,24 @@ class VaultHeader {
         _ => throw const FormatException('Bad creation time'),
       },
       kdf: KdfParams(ops: ops, mem: mem),
-      salt: _bytes(kdf, 'salt'),
-      passphraseBox: SealedBox.fromJson(_map(json, 'passphrase')),
-      recoveryBox: SealedBox.fromJson(_map(json, 'recovery')),
-      check: SealedBox.fromJson(_map(json, 'check')),
+      salt: salt,
+      passphraseBox: _box(json, 'passphrase', _keyBytes),
+      recoveryBox: _box(json, 'recovery', _keyBytes),
+      // An empty message.
+      check: _box(json, 'check', 0),
     );
   }
 
   static const formatVersion = 1;
+
+  // Sizes in libsodium's Argon2id and XChaCha20-Poly1305, checked here
+  // since libsodium throws a RangeError, not a SodiumException, for others.
+  // VaultCrypto makes sure they match.
+  static const _saltBytes = 16;
+  static const _nonceBytes = 24;
+  static const _tagBytes = 16;
+  static const _keyBytes = 32;
+
   static final _idPattern = RegExp(r'^[0-9a-f]{32}$');
 
   /// Random, and part of every record's authenticated data, so records
@@ -131,6 +143,20 @@ class VaultHeader {
       'check': check.toJson(),
     }),
   );
+
+  /// The box under [key], sealing a message of [messageBytes].
+  static SealedBox _box(
+    Map<String, Object?> json,
+    String key,
+    int messageBytes,
+  ) {
+    final box = SealedBox.fromJson(_map(json, key));
+    if (box.nonce.length != _nonceBytes ||
+        box.sealed.length != messageBytes + _tagBytes) {
+      throw FormatException('Bad $key box');
+    }
+    return box;
+  }
 
   static Map<String, Object?> _map(Map<String, Object?> json, String key) =>
       switch (json[key]) {
@@ -179,6 +205,23 @@ class Vault {
 
   /// The note key, for the keychain.
   Uint8List exportKey() => _key.extractBytes();
+
+  /// Whether [header] holds this vault's note key, as it does after the
+  /// passphrase or recovery key changed on any computer.
+  bool belongsTo(VaultHeader header) {
+    if (header.id != id) return false;
+    try {
+      _aead.decrypt(
+        cipherText: header.check.sealed,
+        nonce: header.check.nonce,
+        key: _key,
+        additionalData: VaultCrypto._boxData(id, 'check'),
+      );
+      return true;
+    } on SodiumException {
+      return false;
+    }
+  }
 
   /// [plaintext] padded, encrypted and authenticated as record [recordId]
   /// of this vault: "GPAD", a format byte, the nonce, then the ciphertext.
@@ -271,7 +314,17 @@ class NewVault {
 /// Makes and unlocks vaults, with libsodium: Argon2id turns the passphrase
 /// into a key, and XChaCha20-Poly1305 encrypts.
 class VaultCrypto {
-  VaultCrypto(this._sodium);
+  VaultCrypto(this._sodium)
+    : assert(
+        _sodium.crypto.pwhash.saltBytes == VaultHeader._saltBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.nonceBytes ==
+                VaultHeader._nonceBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.aBytes ==
+                VaultHeader._tagBytes &&
+            _sodium.crypto.aeadXChaCha20Poly1305IETF.keyBytes ==
+                VaultHeader._keyBytes,
+        'libsodium sizes changed',
+      );
 
   static Future<VaultCrypto> load() async =>
       VaultCrypto(await SodiumSumoInit.init());
@@ -312,6 +365,64 @@ class VaultCrypto {
     } finally {
       passphraseKey.dispose();
       recoveryKey.dispose();
+    }
+  }
+
+  /// [header] locked with [passphrase] instead, with a new salt. The note
+  /// key stays, so notes need no encrypting again, and so does the
+  /// recovery key.
+  Future<VaultHeader> changePassphrase(
+    VaultHeader header,
+    Vault vault,
+    String passphrase, {
+    KdfParams kdf = KdfParams.moderate,
+  }) async {
+    if (!vault.belongsTo(header)) {
+      throw ArgumentError('That vault\'s key isn\'t in this header');
+    }
+    final salt = _sodium.randombytes.buf(_sodium.crypto.pwhash.saltBytes);
+    final key = await _derive(passphrase, salt, kdf);
+    try {
+      return VaultHeader(
+        id: header.id,
+        createdAt: header.createdAt,
+        kdf: kdf,
+        salt: salt,
+        passphraseBox: _wrap(vault._key, key, header.id, 'passphrase'),
+        recoveryBox: header.recoveryBox,
+        check: header.check,
+      );
+    } finally {
+      key.dispose();
+    }
+  }
+
+  /// [header] with a new recovery key, which is returned to show once. The
+  /// old one stops opening the vault file; the passphrase stays.
+  ({VaultHeader header, String recoveryKey}) newRecoveryKey(
+    VaultHeader header,
+    Vault vault,
+  ) {
+    if (!vault.belongsTo(header)) {
+      throw ArgumentError('That vault\'s key isn\'t in this header');
+    }
+    final recovery = _sodium.randombytes.buf(RecoveryKey.bytes);
+    final key = _recoveryWrapKey(header.id, recovery);
+    try {
+      return (
+        header: VaultHeader(
+          id: header.id,
+          createdAt: header.createdAt,
+          kdf: header.kdf,
+          salt: header.salt,
+          passphraseBox: header.passphraseBox,
+          recoveryBox: _wrap(vault._key, key, header.id, 'recovery'),
+          check: header.check,
+        ),
+        recoveryKey: RecoveryKey.encode(recovery),
+      );
+    } finally {
+      key.dispose();
     }
   }
 

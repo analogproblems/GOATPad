@@ -46,6 +46,20 @@ class HeldUnlocks implements VaultCrypto {
   @override
   Vault? fromKey(VaultHeader header, Uint8List noteKey) =>
       _crypto.fromKey(header, noteKey);
+
+  @override
+  Future<VaultHeader> changePassphrase(
+    VaultHeader header,
+    Vault vault,
+    String passphrase, {
+    KdfParams kdf = KdfParams.moderate,
+  }) => _crypto.changePassphrase(header, vault, passphrase, kdf: kdf);
+
+  @override
+  ({VaultHeader header, String recoveryKey}) newRecoveryKey(
+    VaultHeader header,
+    Vault vault,
+  ) => _crypto.newRecoveryKey(header, vault);
 }
 
 void main() {
@@ -585,6 +599,41 @@ void main() {
     await restarted.signInAgain();
     await settle(restarted);
     expect(restarted.status, SyncStatus.synced);
+  });
+
+  test('a new passphrase reaches home, signed in or not', () async {
+    const newPassphrase = 'orange whale kite meadow';
+    final work = notepadWith('pasted at work');
+    final sync = await setUpFirst(work);
+    final home = notepadWith('typed at home');
+    var homeSync = await join(home, keychain: const NoKeychain());
+    expect(
+      await sync.changePassphrase(
+        passphrase: passphrase,
+        newPassphrase: newPassphrase,
+      ),
+      isTrue,
+    );
+    expect(drive.tagged('vault'), hasLength(1));
+
+    await homeSync.syncNow();
+    expect(homeSync.status, SyncStatus.synced);
+    expect(homeSync.config!.vault.encode(), sync.config!.vault.encode());
+
+    // Home kept it, so after a restart without a keychain, before it signs
+    // in to Google again, the new one unlocks and the old one doesn't.
+    homeSync.dispose();
+    controllers.remove(homeSync);
+    homeSync = controllerFor(home, keychain: const NoKeychain());
+    await homeSync.start();
+    expect(
+      await homeSync.unlock(passphrase: passphrase, remember: false),
+      isFalse,
+    );
+    expect(
+      await homeSync.unlock(passphrase: newPassphrase, remember: false),
+      isTrue,
+    );
   });
 
   test('a GPad without its own client uses yours, on every start', () async {

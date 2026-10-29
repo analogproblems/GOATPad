@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:goatpad/src/sync/folder_backend.dart';
 import 'package:goatpad/src/sync/keychain.dart';
 import 'package:goatpad/src/sync/sync_backend.dart';
 import 'package:goatpad/src/sync/sync_controller.dart';
+import 'package:goatpad/src/sync/sync_engine.dart' show SyncException;
 import 'package:goatpad/src/sync/sync_record.dart';
 import 'package:goatpad/src/sync/vault.dart';
 import 'package:path/path.dart' as p;
@@ -407,12 +409,312 @@ void main() {
       isEmpty,
     );
   });
+
+  group('changing the passphrase or recovery key', () {
+    const newPassphrase = 'orange whale kite meadow';
+
+    File vaultFile(SyncController sync) => File(
+      p.join(
+        (sync.config!.place as FolderPlace).path,
+        FolderBackend.vaultFileName,
+      ),
+    );
+
+    Future<SyncController> joinFrom(
+      Notepad notepad, {
+      Keychain? keychain,
+      String? key,
+    }) async {
+      final sync = controllerFor(notepad, keychain: keychain, host: 'home');
+      final checked = await sync.checkFolder(chosen);
+      expect(
+        await sync.join(
+          place: checked.place,
+          vault: checked.vault!,
+          passphrase: key == null ? passphrase : null,
+          recoveryKey: key,
+          deviceName: 'Home',
+          remember: false,
+        ),
+        isTrue,
+      );
+      await settle(sync);
+      return sync;
+    }
+
+    test('a new passphrase reaches the other computers', () async {
+      final work = Notepad.load(NoteStore.inMemory());
+      final sync = await setUpFirst(work);
+      final home = Notepad.load(NoteStore.inMemory());
+      final homeSync = await joinFrom(home);
+
+      expect(
+        await sync.changePassphrase(
+          passphrase: 'wrong passphrase',
+          newPassphrase: newPassphrase,
+        ),
+        isFalse,
+      );
+      expect(
+        await sync.changePassphrase(
+          passphrase: passphrase,
+          newPassphrase: newPassphrase,
+        ),
+        isTrue,
+      );
+      final header = VaultHeader.decode(vaultFile(sync).readAsBytesSync());
+      expect(header.id, sync.config!.vault.id);
+      expect(header.encode(), sync.config!.vault.encode());
+      final crypto = await VaultCrypto.load();
+      expect(await crypto.unlock(header, passphrase), isNull);
+      (await crypto.unlock(header, newPassphrase))!.dispose();
+      final saved = jsonDecode(work.store.setting('sync')!) as Map;
+      expect(base64.decode(saved['vault'] as String), header.encode());
+
+      // Home keeps the new vault file as it syncs, and notes go on syncing.
+      work.editText(work.newNote(), 'after the change');
+      await settle(sync);
+      await homeSync.syncNow();
+      expect(homeSync.status, SyncStatus.synced);
+      expect(homeSync.config!.vault.encode(), header.encode());
+      expect(home.openNotes.map((n) => n.text), contains('after the change'));
+    });
+
+    test('a computer that was off takes the new passphrase', () async {
+      final work = Notepad.load(NoteStore.inMemory());
+      // Windows won't rename a folder something is watching.
+      final sync = await setUpFirst(work, watch: false);
+      final dbPath = p.join(dir.path, 'home.db');
+      var store = NoteStore.open(dbPath);
+      var home = Notepad.load(store);
+      var homeSync = await joinFrom(home, keychain: const NoKeychain());
+
+      Future<void> stop() async {
+        await homeSync.finish();
+        homeSync.dispose();
+        controllers.remove(homeSync);
+        home.dispose();
+        store.close();
+      }
+
+      Future<void> restart() async {
+        store = NoteStore.open(dbPath);
+        home = Notepad.load(store);
+        homeSync = controllerFor(
+          home,
+          keychain: const NoKeychain(),
+          host: 'home',
+          watch: false,
+        );
+        await homeSync.start();
+        expect(homeSync.status, SyncStatus.locked);
+      }
+
+      await stop();
+      expect(
+        await sync.changePassphrase(
+          passphrase: passphrase,
+          newPassphrase: newPassphrase,
+        ),
+        isTrue,
+      );
+      final changed = vaultFile(sync).readAsBytesSync();
+
+      // Out of reach, the new passphrase can't be checked yet.
+      await restart();
+      final folder = (homeSync.config!.place as FolderPlace).path;
+      await Directory(folder).rename('$folder-away');
+      expect(
+        await homeSync.unlock(passphrase: newPassphrase, remember: false),
+        isFalse,
+      );
+      await Directory('$folder-away').rename(folder);
+      expect(
+        await homeSync.unlock(passphrase: newPassphrase, remember: false),
+        isTrue,
+      );
+      expect(homeSync.config!.vault.encode(), changed);
+      await settle(homeSync);
+      expect(homeSync.status, SyncStatus.synced);
+
+      // It was kept, so the old one stops working here too.
+      await stop();
+      await restart();
+      expect(
+        await homeSync.unlock(passphrase: passphrase, remember: false),
+        isFalse,
+      );
+      expect(
+        await homeSync.unlock(passphrase: newPassphrase, remember: false),
+        isTrue,
+      );
+      await stop();
+    });
+
+    test('a new recovery key replaces the old one everywhere', () async {
+      final work = Notepad.load(NoteStore.inMemory());
+      final sync = controllerFor(work);
+      final folder = p.join(chosen, 'GPad');
+      await Directory(folder).create();
+      final oldKey = await sync.create(
+        place: FolderPlace(folder),
+        passphrase: passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await settle(sync);
+      final homeSync = await joinFrom(
+        Notepad.load(NoteStore.inMemory()),
+        key: oldKey,
+      );
+
+      expect(await sync.newRecoveryKey(passphrase: 'wrong passphrase'), isNull);
+      final newKey = await sync.newRecoveryKey(recoveryKey: oldKey);
+      expect(RecoveryKey.decode(newKey!), isNotNull);
+      expect(newKey, isNot(oldKey));
+
+      await homeSync.syncNow();
+      final header = homeSync.config!.vault;
+      expect(header.encode(), vaultFile(sync).readAsBytesSync());
+      final crypto = await VaultCrypto.load();
+      expect(crypto.unlockWithRecoveryKey(header, oldKey), isNull);
+      crypto.unlockWithRecoveryKey(header, newKey)!.dispose();
+      (await crypto.unlock(header, passphrase))!.dispose();
+    });
+
+    test('a change made elsewhere meanwhile is kept', () async {
+      final gate = _Gate();
+      final work = Notepad.load(NoteStore.inMemory());
+      final sync = controllerFor(work, gate: gate);
+      final checked = await sync.checkFolder(chosen);
+      await Directory((checked.place as FolderPlace).path).create();
+      await sync.create(
+        place: checked.place,
+        passphrase: passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await settle(sync);
+      final homeSync = await joinFrom(Notepad.load(NoteStore.inMemory()));
+
+      gate.beforeReplacingVault = () async {
+        expect(
+          await homeSync.changePassphrase(
+            passphrase: passphrase,
+            newPassphrase: 'changed at home',
+          ),
+          isTrue,
+        );
+      };
+      await expectLater(
+        sync.changePassphrase(
+          passphrase: passphrase,
+          newPassphrase: newPassphrase,
+        ),
+        throwsA(isA<SyncBackendException>()),
+      );
+      final crypto = await VaultCrypto.load();
+      final header = VaultHeader.decode(vaultFile(sync).readAsBytesSync());
+      expect(await crypto.unlock(header, newPassphrase), isNull);
+      (await crypto.unlock(header, 'changed at home'))!.dispose();
+
+      // Trying again starts from home's.
+      expect(
+        await sync.changePassphrase(
+          passphrase: passphrase,
+          newPassphrase: newPassphrase,
+        ),
+        isFalse,
+      );
+      expect(
+        await sync.changePassphrase(
+          passphrase: 'changed at home',
+          newPassphrase: newPassphrase,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a vault file with boxes of the wrong size stops sync', () async {
+      final work = Notepad.load(NoteStore.inMemory());
+      final note = work.newNote();
+      work.editText(note, 'kept');
+      final sync = await setUpFirst(work);
+      final good = vaultFile(sync).readAsStringSync();
+      final records = Directory(
+        p.join((sync.config!.place as FolderPlace).path, 'records'),
+      );
+      Map<String, List<int>> written() => {
+        for (final f in records.listSync().whereType<File>())
+          p.basename(f.path): f.readAsBytesSync(),
+      };
+
+      for (final damage in <void Function(Map<String, Object?>)>[
+        (j) => (j['check'] as Map)['nonce'] = '',
+        (j) => (j['check'] as Map)['nonce'] = base64.encode(List.filled(23, 0)),
+        (j) => (j['check'] as Map)['box'] = base64.encode(List.filled(15, 0)),
+      ]) {
+        final json = jsonDecode(good) as Map<String, Object?>;
+        damage(json);
+        vaultFile(sync).writeAsStringSync(jsonEncode(json));
+        final before = written();
+        work.editText(note, '${note.text}, edited');
+        await sync.syncNow();
+        expect(sync.status, SyncStatus.problem, reason: jsonEncode(json));
+        expect(sync.problem, contains('The vault file in'));
+        expect(written(), before);
+        await expectLater(
+          sync.changePassphrase(
+            passphrase: passphrase,
+            newPassphrase: newPassphrase,
+          ),
+          throwsA(isA<SyncException>()),
+        );
+
+        vaultFile(sync).writeAsStringSync(good);
+        await sync.syncNow();
+        expect(sync.status, SyncStatus.synced);
+      }
+    });
+
+    test(
+      'a vault file this computer\'s key doesn\'t open stops sync',
+      () async {
+        final work = Notepad.load(NoteStore.inMemory());
+        final sync = await setUpFirst(work);
+        final before = sync.config!.vault.encode();
+        final other = await (await VaultCrypto.load()).create(
+          'another passphrase',
+          kdf: KdfParams.insecureForTests,
+        );
+        other.vault.dispose();
+        final json = jsonDecode(utf8.decode(other.header.encode())) as Map;
+        json['id'] = sync.config!.vault.id;
+        vaultFile(sync).writeAsStringSync(jsonEncode(json));
+
+        await sync.syncNow();
+        expect(sync.status, SyncStatus.problem);
+        expect(sync.problem, contains('key doesn\'t open'));
+        expect(sync.config!.vault.encode(), before);
+        await expectLater(
+          sync.changePassphrase(
+            passphrase: passphrase,
+            newPassphrase: newPassphrase,
+          ),
+          throwsA(isA<SyncException>()),
+        );
+      },
+    );
+  });
 }
 
 /// Holds reads or writes, once [reads] or [writes] is set, until [open].
 class _Gate {
   bool reads = false;
   bool writes = false;
+
+  /// Runs before the vault file is replaced, as another computer would.
+  Future<void> Function()? beforeReplacingVault;
   final _reached = Completer<void>();
   final _open = Completer<void>();
 
@@ -455,6 +757,14 @@ class _GatedBackend implements SyncBackend {
   Future<Uint8List?> readVault() => inner.readVault();
   @override
   Future<bool> createVault(Uint8List bytes) => inner.createVault(bytes);
+  @override
+  Future<bool> replaceVault(Uint8List old, Uint8List bytes) async {
+    final before = gate.beforeReplacingVault;
+    gate.beforeReplacingVault = null;
+    await before?.call();
+    return inner.replaceVault(old, bytes);
+  }
+
   @override
   Future<List<RemoteFile>> list() => inner.list();
   @override
