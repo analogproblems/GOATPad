@@ -45,17 +45,20 @@ class Tray extends ChangeNotifier {
   /// Whether the person turned the tray on.
   bool get enabled => sync.notepad.store.setting(_settingKey) == 'on';
 
-  /// Whether closing the window keeps GPad running in the tray now: it is
-  /// turned on, sync is set up, and the icon is there to come back by.
+  /// Whether closing the window keeps GPad running in the tray, as far as
+  /// the runner last said: it is turned on, sync is set up, and the icon is
+  /// there to come back by.
   bool get keepsRunning => _wantsIcon && _wanted && _shown;
 
   bool get _wantsIcon =>
       enabled && _available == true && sync.config != null && !_disposed;
 
-  /// Whether closing the window should keep GPad running in the tray,
-  /// trying once more to put the icon there if it isn't yet.
+  /// Whether closing the window should keep GPad running in the tray now.
+  /// Asks the runner again, since the icon can go (Explorer restarting, a
+  /// tray extension turned off) or come back since it last said.
   Future<bool> readyToKeepRunning() async {
-    if (!keepsRunning && _wantsIcon) await _update();
+    if (!_wantsIcon) return false;
+    await _askForIcon();
     return keepsRunning;
   }
 
@@ -101,8 +104,15 @@ class Tray extends ChangeNotifier {
       await _call<void>('status', {'status': status});
       return;
     }
+    await _askForIcon();
+  }
+
+  /// Asks the runner to show the icon, once at a time, and keeps whether it
+  /// is there. Until it is, closing quits; the next change, or closing,
+  /// asks again.
+  Future<void> _askForIcon() async {
     if (_showing case final showing?) return showing;
-    final showing = _showing = _show(status);
+    final showing = _showing = _show();
     try {
       await showing;
     } finally {
@@ -110,9 +120,8 @@ class Tray extends ChangeNotifier {
     }
   }
 
-  /// Until the runner says the icon is there, closing quits; the next
-  /// change, or closing, asks again.
-  Future<void> _show(String status) async {
+  Future<void> _show() async {
+    final status = 'GPad: ${syncSummary(sync).label}';
     _wanted = true;
     final shown = await _call<bool>('show', {'status': status}) == true;
     // Taken away meanwhile.

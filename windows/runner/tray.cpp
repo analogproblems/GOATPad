@@ -133,9 +133,8 @@ void Tray::Show() {
   data.uCallbackMessage = kIconMessage;
   data.hIcon = icon_;
   lstrcpynW(data.szTip, status_.c_str(), ARRAYSIZE(data.szTip));
-  if (shown_) {
-    Shell_NotifyIcon(NIM_MODIFY, &data);
-  } else {
+  // An icon Explorer lost, restarting, can't be changed: add it again.
+  if (!shown_ || Shell_NotifyIcon(NIM_MODIFY, &data) == FALSE) {
     shown_ = Shell_NotifyIcon(NIM_ADD, &data) != FALSE;
   }
 }

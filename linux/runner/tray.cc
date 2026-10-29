@@ -35,6 +35,11 @@ struct Tray {
   AppIndicatorApi api;
   AppIndicator* indicator;
   GtkWidget* status_item;
+  // Whether the tray host took the icon, as the indicator last said.
+  gboolean connected;
+  // "show" calls waiting to hear whether it did, for up to two seconds.
+  GList* waiting;
+  guint wait_timeout;
 };
 
 bool load_api(Tray* tray) {
@@ -111,14 +116,37 @@ gchar* icon_folder() {
   return g_build_filename(folder, "data", "tray", nullptr);
 }
 
-// The tray went away, as when its GNOME extension is turned off: show the
-// window rather than strand GPad without a way back.
+// Tells the "show" calls waiting whether the icon is in the tray.
+void answer_waiting(Tray* tray) {
+  if (tray->wait_timeout != 0) {
+    g_source_remove(tray->wait_timeout);
+    tray->wait_timeout = 0;
+  }
+  for (GList* item = tray->waiting; item != nullptr; item = item->next) {
+    g_autoptr(FlMethodCall) call = FL_METHOD_CALL(item->data);
+    respond_bool(call, tray->connected);
+  }
+  g_clear_pointer(&tray->waiting, g_list_free);
+}
+
+gboolean wait_over(gpointer data) {
+  Tray* tray = static_cast<Tray*>(data);
+  tray->wait_timeout = 0;
+  answer_waiting(tray);
+  return G_SOURCE_REMOVE;
+}
+
+// The tray host took the icon, or went away, as when its GNOME extension
+// is turned off. Then the window comes back rather than strand GPad
+// without a way back, and the next close quits unless the host is back.
 void connection_changed(AppIndicator* indicator, gboolean connected,
                         gpointer data) {
   Tray* tray = static_cast<Tray*>(data);
+  tray->connected = connected;
   if (!connected && !gtk_widget_get_visible(GTK_WIDGET(tray->window))) {
     show_window(tray);
   }
+  answer_waiting(tray);
 }
 
 void make_indicator(Tray* tray) {
@@ -213,7 +241,16 @@ void method_call(FlMethodChannel* channel, FlMethodCall* call,
     if (tray->indicator == nullptr) make_indicator(tray);
     set_status(tray, status_argument(call));
     tray->api.set_status(tray->indicator, kStatusActive);
-    respond_bool(call, true);
+    // Answers whether the tray host has the icon now. Registering with it
+    // takes a moment, so a new icon waits to hear, for up to two seconds.
+    if (tray->connected) {
+      respond_bool(call, true);
+      return;
+    }
+    tray->waiting = g_list_append(tray->waiting, g_object_ref(call));
+    if (tray->wait_timeout == 0) {
+      tray->wait_timeout = g_timeout_add_seconds(2, wait_over, tray);
+    }
   } else if (strcmp(method, "status") == 0) {
     set_status(tray, status_argument(call));
     respond(call, nullptr);
@@ -237,6 +274,8 @@ void method_call(FlMethodChannel* channel, FlMethodCall* call,
 
 void free_tray(gpointer data) {
   Tray* tray = static_cast<Tray*>(data);
+  tray->connected = FALSE;
+  answer_waiting(tray);
   if (tray->indicator != nullptr) {
     tray->api.set_status(tray->indicator, kStatusPassive);
     g_object_unref(tray->indicator);

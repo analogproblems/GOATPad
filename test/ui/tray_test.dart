@@ -295,6 +295,29 @@ void main() {
     });
   }
 
+  testWidgets('an icon lost after showing stops closing from hiding', (
+    tester,
+  ) async {
+    final runner = _Runner();
+    addTearDown(runner.stop);
+    final (_, sync, tray) = await pumpApp(tester, runner);
+    expect(tray.keepsRunning, isTrue);
+    Future<AppExitResponse?> close() =>
+        tester.runAsync(() => tester.binding.handleRequestAppExit());
+
+    // The tray host goes away (the runner brings the window back).
+    runner.icon = _Icon.refused;
+    expect(await close(), AppExitResponse.exit);
+    expect(runner.calls.last, startsWith('show '));
+    expect(tray.keepsRunning, isFalse);
+
+    // Once it is back, closing hides again.
+    runner.icon = _Icon.shows;
+    expect(await close(), AppExitResponse.cancel);
+    expect(runner.calls.last, 'hideWindow');
+    await finish(tester, sync);
+  });
+
   testWidgets('Quit chosen twice quits once', (tester) async {
     final runner = _Runner();
     addTearDown(runner.stop);

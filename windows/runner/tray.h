@@ -13,7 +13,8 @@
 // The "gpad/tray" channel: GPad's icon in the notification area, and
 // showing or hiding the window for it.
 //
-// Dart calls: available -> bool, show {status} -> bool, status {status},
+// Dart calls: available -> bool, show {status} -> whether the icon is in
+// the notification area now, status {status},
 // remove, hideWindow, showWindow, and allowForeground, which a second GPad
 // calls so the first may bring its window to the front. The icon calls
 // Dart: syncNow, quit. A click on it, or Open GPad, shows the window here.

@@ -12,8 +12,9 @@
 // neither is installed. "available" also asks the session bus whether
 // anything shows such icons (GNOME doesn't, without an extension).
 //
-// Dart calls: available -> bool, show {status} -> bool, status {status},
-// remove, hideWindow, showWindow, allowForeground (nothing to do here).
+// Dart calls: available -> bool, show {status} -> whether the tray host
+// has the icon now, status {status}, remove, hideWindow, showWindow,
+// allowForeground (nothing to do here).
 // The icon's menu calls Dart: syncNow, quit. Open GPad shows the window
 // here.
 //
