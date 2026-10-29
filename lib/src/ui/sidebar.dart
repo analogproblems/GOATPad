@@ -123,7 +123,9 @@ class _SidebarState extends State<Sidebar> {
       builder: (context, _) {
         final summary = syncSummary(sync);
         final attention = switch (sync.status) {
-          SyncStatus.problem || SyncStatus.locked => true,
+          SyncStatus.problem ||
+          SyncStatus.locked ||
+          SyncStatus.signedOut => true,
           _ => sync.unreadable.isNotEmpty,
         };
         final color = attention

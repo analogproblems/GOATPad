@@ -11,17 +11,25 @@ import 'package:goatpad/src/sync/vault.dart';
 import 'package:goatpad/src/ui/sidebar.dart';
 import 'package:path/path.dart' as p;
 
+import '../sync/fake_drive.dart';
+
 const _passphrase = 'purple tiger lamp river';
 
-SyncController _controller(Notepad notepad, {Keychain? keychain}) =>
-    SyncController(
-      notepad,
-      keychain: keychain ?? MemoryKeychain(),
-      kdf: KdfParams.insecureForTests,
-      uploadDelay: const Duration(milliseconds: 20),
-      maxWait: const Duration(milliseconds: 200),
-      hostName: 'work-pc',
-    );
+SyncController _controller(
+  Notepad notepad, {
+  Keychain? keychain,
+  FakeDrive? drive,
+}) => SyncController(
+  notepad,
+  keychain: keychain ?? MemoryKeychain(),
+  kdf: KdfParams.insecureForTests,
+  uploadDelay: const Duration(milliseconds: 20),
+  maxWait: const Duration(milliseconds: 200),
+  hostName: 'work-pc',
+  googleClient: drive == null ? null : FakeDrive.ownClient,
+  httpClient: drive?.client,
+  openBrowser: drive?.allow,
+);
 
 Future<void> _pumpApp(
   WidgetTester tester,
@@ -104,7 +112,7 @@ void main() {
     expect(find.text('Save your recovery key'), findsNothing);
 
     await _waitFor(tester, _inSidebar('Synced'));
-    expect(sync.config!.folder, folder);
+    expect((sync.config!.place as FolderPlace).path, folder);
     expect(File(p.join(folder, 'gpad-vault.json')).existsSync(), isTrue);
     await _finish(tester, sync);
   });
@@ -116,7 +124,7 @@ void main() {
       final folder = p.join(dir.path, 'GPad');
       await Directory(folder).create();
       await first.create(
-        folder: folder,
+        place: FolderPlace(folder),
         passphrase: _passphrase,
         deviceName: 'Work PC',
         remember: false,
@@ -143,5 +151,113 @@ void main() {
     await _waitFor(tester, _inSidebar('Synced'));
     expect(find.text('Unlock sync'), findsNothing);
     await _finish(tester, sync);
+  });
+
+  testWidgets('setting sync up with Google Drive signs in in the browser', (
+    tester,
+  ) async {
+    final drive = FakeDrive();
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = _controller(notepad, drive: drive);
+    await _pumpApp(tester, notepad, sync);
+
+    await tester.tap(_inSidebar('Sync is off'));
+    await tester.pump();
+    // Drive comes first when GPad has a Google sign-in.
+    await tester.tap(find.text('Sign in with Google'));
+    await _waitFor(tester, find.text('Choose a passphrase'));
+    expect(
+      find.text(
+        'GPad keeps your notes in a GPad folder in the Google Drive of '
+        'jason@example.com.',
+      ),
+      findsOneWidget,
+    );
+    await tester.enterText(_field('Passphrase'), _passphrase);
+    await tester.enterText(_field('Type it again'), _passphrase);
+    await tester.tap(find.text('Start syncing'));
+    await _waitFor(tester, find.text('Save your recovery key'));
+    await tester.tap(find.text('I\'ve saved my recovery key'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+    await tester.pump();
+
+    await _waitFor(tester, _inSidebar('Synced'));
+    expect(sync.config!.place, isA<DrivePlace>());
+    expect(drive.tagged('vault'), hasLength(1));
+
+    await tester.tap(_inSidebar('Synced'));
+    await tester.pump();
+    expect(find.text('Google Drive'), findsOneWidget);
+    expect(find.text('jason@example.com'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pump();
+    await _finish(tester, sync);
+  });
+
+  testWidgets('signed out by Google, sync asks to sign in again', (
+    tester,
+  ) async {
+    final drive = FakeDrive();
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = _controller(notepad, drive: drive);
+    await tester.runAsync(() async {
+      final checked = await sync.signInToDrive();
+      await sync.create(
+        place: checked.place,
+        passphrase: _passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await sync.finish();
+      drive.revokeAll();
+      await sync.syncNow();
+    });
+    expect(sync.status, SyncStatus.signedOut);
+    await _pumpApp(tester, notepad, sync);
+
+    await tester.tap(_inSidebar('Sync paused: sign in'));
+    await tester.pump();
+    expect(find.text('Sign in to Google'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in with Google'));
+    await _waitFor(tester, _inSidebar('Synced'));
+    expect(find.text('Sign in to Google'), findsNothing);
+    await _finish(tester, sync);
+  });
+
+  testWidgets('a GPad without a Google sign-in asks for your own client', (
+    tester,
+  ) async {
+    final drive = FakeDrive();
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = SyncController(
+      notepad,
+      keychain: MemoryKeychain(),
+      kdf: KdfParams.insecureForTests,
+      hostName: 'work-pc',
+      googleClient: null,
+      httpClient: drive.client,
+      openBrowser: drive.allow,
+    );
+    await _pumpApp(tester, notepad, sync);
+    await tester.tap(_inSidebar('Sync is off'));
+    await tester.pump();
+    // A sync folder comes first, but Drive works with your own client.
+    expect(_field('Sync folder'), findsOneWidget);
+    await tester.tap(find.text('Google Drive'));
+    await tester.pump();
+    await tester.tap(find.text('Sign in with Google'));
+    await tester.pump();
+    expect(
+      find.text('Enter your Google client\'s ID and secret.'),
+      findsOneWidget,
+    );
+    await tester.enterText(_field('Client ID'), FakeDrive.ownClient.id);
+    await tester.enterText(_field('Client secret'), FakeDrive.ownClient.secret);
+    await tester.tap(find.text('Sign in with Google'));
+    await _waitFor(tester, find.text('Choose a passphrase'));
+    await tester.tap(find.text('Back'));
+    await tester.pump();
+    sync.dispose();
   });
 }

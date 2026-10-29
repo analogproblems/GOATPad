@@ -309,12 +309,13 @@ doesn't care where the files live. Step 3 ships it in three parts:
    Dropbox, OneDrive, Nextcloud or Syncthing keeps in step, or on a network
    drive. GPad writes into a `GPad` folder inside the one you choose (or
    straight into it if it already holds a vault or is called `GPad`).
-2. **Google Drive, direct.** Linux has no official Drive desktop app, so
-   GPad will talk to the Drive API itself. It asks only for the `drive.file`
-   scope, which lets it see files it created and nothing else. Full Drive
-   access is a restricted scope that needs a paid Google security assessment
-   for public apps. Release builds will get GPad's OAuth client ID from CI
-   secrets, and anyone will be able to use their own.
+2. **Google Drive, direct (built).** Linux has no official Drive desktop
+   app, so GPad talks to the Drive API itself. It asks only for the
+   `drive.file` scope, which lets it see files it created and nothing else.
+   Full Drive access is a restricted scope that needs a paid Google security
+   assessment for public apps. Release builds get GPad's OAuth client from
+   CI secrets, and anyone can use their own (see
+   [Google Drive](#google-drive) below).
 3. **Later in step 3:** changing the passphrase, making a new recovery key,
    and syncing from the tray while the window is closed.
 
@@ -392,10 +393,71 @@ A note whose folder hasn't arrived yet shows at the top level and moves into
 the folder once it does. A folder loop (two machines moving folders into each
 other at once) is broken at the same folder on every machine.
 
+### Google Drive
+
+The Drive backend keeps the same layout as a sync folder, in a `GPad`
+folder in My Drive: `gpad-vault.json` and `records/<id>.gpad`. Download
+that folder and it works as a sync folder too. Drive differs from a folder
+in three ways, and the backend makes up for each:
+
+- **Files are found by tags, not paths.** GPad tags every file it makes
+  with `appProperties` (what it is, and which vault it belongs to), which
+  only GPad's client can see or search by. Lists ask for "records of this
+  vault, not in the bin", so moving or renaming the `GPad` folder in Drive
+  changes nothing, and files from another vault never mix in.
+- **Two files can have one name.** Two computers setting up at once can
+  each make a vault, and two computers that both put a missing note back
+  can each make its file. The one Drive made first (by Drive's own
+  `createdTime`, then file id) counts, the same on every computer. After
+  making a vault, GPad lists vaults again; if an older one is there, it
+  deletes its own and says to sign in again and join. Should Drive's search
+  lag and hide the older one, that computer finds it on its next round and
+  stops, with "a different set of GPad notes", before writing anything
+  more; what it wrote is tagged with its own vault, so nobody else reads
+  it. A second file for one note is read like a sync tool's copy: merged,
+  then deleted.
+- **No conditional writes or deletes.** Drive can't replace or delete a
+  file only if it is unchanged. A file's tag is its id and head revision,
+  taken from Drive's answer to the upload, so it is the version GPad wrote
+  even if another computer replaces it a moment later; then the tags differ
+  and the next round reads it. A copy is deleted after checking its tag,
+  which leaves a moment in between. Only a computer that took that copy for
+  the note's own file writes to it, and that computer still has what it
+  wrote, finds the note's own file changed next round, and merges again.
+
+Drive has no change stream GPad can use without more permissions, so it
+looks every minute, when the window comes back into focus and before
+quitting, well within Google's request limits. Requests that Google
+answers with "slow down" (429, rate-limit 403s) or a server error are
+retried with growing, jittered waits.
+
+**Signing in** uses Google's flow for desktop apps: GPad opens Google's
+page in the browser and waits on a one-off server at `127.0.0.1` on a
+random port, where Google sends the browser back with a code. A random
+`state` ties the answer to the request, and PKCE (S256) ties the code to
+this GPad, so a code that leaks is no use to anyone else. GPad checks that
+the person left the Drive permission ticked. The refresh token goes in the
+keychain next to the note key; access tokens last an hour and are only kept
+in memory. When Google no longer takes the refresh token (access removed,
+or a testing-mode app's 7 days are up), sync pauses as **Sync paused: sign
+in**, changes wait, and signing in again picks up where it left off. It must
+be the same account. Turning sync off forgets the sign-in but never revokes
+it: revoking removes GPad's access to the account, which would sign out
+every other computer syncing with it.
+
+Google calls a desktop app's client secret public, since anything in an app
+can be dug out of it. Release builds get the client ID and secret from the
+`GPAD_GOOGLE_CLIENT_ID` and `GPAD_GOOGLE_CLIENT_SECRET` secrets through
+`--dart-define`, which only keeps them out of the repo. Someone using their
+own client enters it in the sync dialog, and it is saved with the sync
+settings. Every computer must use the same client, since Google shows each
+client only the files it made.
+
 ### Timing
 
 Changes go up 3 seconds after typing stops, or after 20 seconds of
-non-stop typing. GPad also syncs when the sync folder changes, every minute,
+non-stop typing. GPad also syncs when the sync folder changes (not for
+Drive, which can't say), every minute,
 when the window comes back into focus, and once more before it quits (giving
 up after 5 seconds, since the changes are kept for next time). Turning
 sync off, or setting it up again, stops a round under way once the file it
@@ -455,6 +517,9 @@ GPad does not protect against:
   one of them syncs.
 - An employer's policy on putting work content in personal cloud storage.
   Check before relying on sync from a work machine.
+- Someone building an app that signs in as GPad. GPad's Google client ID
+  and secret are public, as for every desktop app. Such an app would still
+  need you to sign in and allow it, and would see only ciphertext.
 
 ## Release (step 4)
 

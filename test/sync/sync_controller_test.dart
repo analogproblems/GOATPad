@@ -86,11 +86,11 @@ void main() {
   }) async {
     final sync = controllerFor(notepad, keychain: keychain, watch: watch);
     final checked = await sync.checkFolder(chosen);
-    expect(checked.path, p.join(chosen, 'GPad'));
+    expect((checked.place as FolderPlace).path, p.join(chosen, 'GPad'));
     expect(checked.vault, isNull);
-    await Directory(checked.path).create();
+    await Directory((checked.place as FolderPlace).path).create();
     final key = await sync.create(
-      folder: checked.path,
+      place: checked.place,
       passphrase: passphrase,
       deviceName: 'Work PC',
       remember: true,
@@ -117,7 +117,7 @@ void main() {
     expect(checked.vault, isNotNull);
     expect(
       await homeSync.join(
-        folder: checked.path,
+        place: checked.place,
         vault: checked.vault!,
         passphrase: 'wrong passphrase',
         deviceName: '',
@@ -128,7 +128,7 @@ void main() {
     expect(homeSync.status, SyncStatus.off);
     expect(
       await homeSync.join(
-        folder: checked.path,
+        place: checked.place,
         vault: checked.vault!,
         passphrase: passphrase,
         deviceName: '',
@@ -190,7 +190,7 @@ void main() {
     final folder = p.join(chosen, 'GPad');
     await Directory(folder).create();
     final key = await sync.create(
-      folder: folder,
+      place: FolderPlace(folder),
       passphrase: passphrase,
       deviceName: 'Work PC',
       remember: false,
@@ -201,7 +201,7 @@ void main() {
     final checked = await homeSync.checkFolder(chosen);
     expect(
       await homeSync.join(
-        folder: checked.path,
+        place: checked.place,
         vault: checked.vault!,
         recoveryKey: key.toLowerCase().replaceAll('-', ' '),
         deviceName: 'Home',
@@ -217,7 +217,7 @@ void main() {
     work.editText(note, 'keep me');
     // Windows won't rename a folder something is watching.
     final sync = await setUpFirst(work, watch: false);
-    final folder = sync.config!.folder;
+    final folder = (sync.config!.place as FolderPlace).path;
     final away = '$folder-away';
     await Directory(folder).rename(away);
 
@@ -241,8 +241,12 @@ void main() {
       'another passphrase',
       kdf: KdfParams.insecureForTests,
     );
-    File(p.join(sync.config!.folder, FolderBackend.vaultFileName))
-        .writeAsBytesSync(other.header.encode());
+    File(
+      p.join(
+        (sync.config!.place as FolderPlace).path,
+        FolderBackend.vaultFileName,
+      ),
+    ).writeAsBytesSync(other.header.encode());
     await sync.syncNow();
     expect(sync.status, SyncStatus.problem);
     expect(sync.problem, contains('different set of GPad notes'));
@@ -254,7 +258,7 @@ void main() {
     final home = controllerFor(Notepad.load(NoteStore.inMemory()));
     await expectLater(
       home.create(
-        folder: sync.config!.folder,
+        place: sync.config!.place,
         passphrase: passphrase,
         deviceName: 'Home',
         remember: false,
@@ -270,7 +274,7 @@ void main() {
     final second = controllerFor(Notepad.load(NoteStore.inMemory()));
     Future<bool> setUp(SyncController sync) => sync
         .create(
-          folder: folder,
+          place: FolderPlace(folder),
           passphrase: passphrase,
           deviceName: '',
           remember: false,
@@ -295,7 +299,7 @@ void main() {
     final homeSync = controllerFor(home, host: 'home', gate: gate);
     final checked = await homeSync.checkFolder(chosen);
     await homeSync.join(
-      folder: checked.path,
+      place: checked.place,
       vault: checked.vault!,
       passphrase: passphrase,
       deviceName: '',
@@ -323,7 +327,7 @@ void main() {
     final first = p.join(chosen, 'GPad');
     await Directory(first).create();
     await sync.create(
-      folder: first,
+      place: FolderPlace(first),
       passphrase: passphrase,
       deviceName: 'Work PC',
       remember: false,
@@ -342,7 +346,7 @@ void main() {
     final second = p.join(dir.path, 'Other', 'GPad');
     await Directory(second).create(recursive: true);
     await sync.create(
-      folder: second,
+      place: FolderPlace(second),
       passphrase: 'another passphrase',
       deviceName: 'Work PC',
       remember: false,
@@ -367,7 +371,7 @@ void main() {
     work.editText(note, 'stays');
     final keychain = MemoryKeychain();
     final sync = await setUpFirst(work, keychain: keychain);
-    final folder = sync.config!.folder;
+    final folder = (sync.config!.place as FolderPlace).path;
     await sync.turnOff();
     expect(sync.status, SyncStatus.off);
     expect(sync.config, isNull);
@@ -377,9 +381,9 @@ void main() {
 
     // Back on with the same notes: nothing is counted twice.
     final checked = await sync.checkFolder(folder);
-    expect(checked.path, folder);
+    expect((checked.place as FolderPlace).path, folder);
     await sync.join(
-      folder: folder,
+      place: FolderPlace(folder),
       vault: checked.vault!,
       passphrase: passphrase,
       deviceName: 'Work PC',
