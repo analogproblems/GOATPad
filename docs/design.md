@@ -338,7 +338,9 @@ GPad/
 - **One file per note or folder,** named by its random id, so titles never
   leak through file names and two machines editing different notes never
   touch the same file. Writes go to a temporary file that is then renamed,
-  so a sync tool never uploads half a file.
+  so a sync tool never uploads half a file. The vault file is first
+  claimed with an exclusive create, so of two computers setting up one
+  shared folder at once, only one can win.
 - **A record** is JSON inside the encryption: kind, id, a version vector,
   the device that saved it and its name, when, and the data (or nothing,
   for a delete, which is kept so other machines learn about it).
@@ -363,16 +365,23 @@ are unchanged since last time, and opens the rest:
 - **Older than what this machine has, or missing:** uploaded again, so a
   rolled-back or deleted file is put right by any machine that knows better.
 - **Copies made by the sync tool** (Dropbox's "conflicted copy", Syncthing's
-  `.sync-conflict-`) are merged in like any other version, then deleted.
+  `.sync-conflict-`) are merged in like any other version, then deleted,
+  unless the copy changed after it was read: then it stays for the next
+  round.
 - **A file that can't be opened** (damaged, changed by something else, or
   saved by a newer GPad) is left alone and reported in the sync dialog. It
-  is tried again only once it changes.
+  is tried again only once it changes. Changes here to that note wait
+  rather than replace a version this GPad can't read.
 
 Then everything changed here goes up. A table in `notes.db`
 (`sync_records`), kept current by triggers, counts each note's and folder's
 changes, so a change made while a round is uploading is never mistaken for
 uploaded, and changes waiting when GPad quits are still waiting when it
-starts.
+starts. Notes merged in a round are saved in the same transaction as what
+sync then knows about them; if that fails, the merge is undone in the
+window too, and the next round merges again. A file's tag (its size and
+modification time) is taken before it is renamed into place, so a file
+another computer writes there a moment later is still read.
 
 A note whose folder hasn't arrived yet shows at the top level and moves into
 the folder once it does. A folder loop (two machines moving folders into each
@@ -383,7 +392,9 @@ other at once) is broken at the same folder on every machine.
 Changes go up 3 seconds after typing stops, or after 20 seconds of
 non-stop typing. GPad also syncs when the sync folder changes, every minute,
 when the window comes back into focus, and once more before it quits (giving
-up after 5 seconds, since the changes are kept for next time).
+up after 5 seconds, since the changes are kept for next time). Turning
+sync off, or setting it up again, stops a round under way once the file it
+is reading or writing is done, before it uses the key or records anything.
 
 Before each round, GPad checks that `gpad-vault.json` is still there and is
 the same vault. If the folder is missing (a USB drive that isn't plugged in,

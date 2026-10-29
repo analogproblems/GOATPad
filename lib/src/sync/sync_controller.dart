@@ -90,14 +90,17 @@ class SyncController extends ChangeNotifier {
     this.maxWait = const Duration(seconds: 20),
     this.pollEvery = const Duration(minutes: 1),
     this.hostName,
+    @visibleForTesting SyncBackend Function(String folder)? backendFor,
   }) : keychain = keychain ?? Keychain.system(),
-       _loadCrypto = crypto ?? VaultCrypto.load {
+       _loadCrypto = crypto ?? VaultCrypto.load,
+       _backendFor = backendFor ?? FolderBackend.new {
     notepad.onSaved = _changedHere;
   }
 
   final Notepad notepad;
   final Keychain keychain;
   final Future<VaultCrypto> Function() _loadCrypto;
+  final SyncBackend Function(String folder) _backendFor;
   final KdfParams kdf;
   final Duration uploadDelay;
   final Duration maxWait;
@@ -189,7 +192,7 @@ class SyncController extends ChangeNotifier {
       throw const SyncBackendException('There is no folder there');
     }
     final path = FolderBackend.folderFor(chosen);
-    final bytes = await FolderBackend(path).readVault();
+    final bytes = await _backendFor(path).readVault();
     return FolderCheck(path, bytes == null ? null : VaultHeader.decode(bytes));
   }
 
@@ -202,7 +205,7 @@ class SyncController extends ChangeNotifier {
     required bool remember,
   }) async {
     final made = await (await _vaultCrypto).create(passphrase, kdf: kdf);
-    if (!await FolderBackend(folder)
+    if (!await _backendFor(folder)
         .createVault(Uint8List.fromList(made.header.encode()))) {
       made.vault.dispose();
       throw const SyncBackendException(
@@ -322,6 +325,9 @@ class SyncController extends ChangeNotifier {
     String deviceName,
     bool remember,
   ) async {
+    // A round still under way for the old setup stops before anything
+    // here changes.
+    _stop();
     final store = notepad.store;
     // What sync knows belongs to one vault; with another, start afresh.
     if (store.setting(_stateVaultKey) != header.id) {
@@ -353,7 +359,7 @@ class SyncController extends ChangeNotifier {
 
   void _run(SyncConfig config, Vault vault) {
     _stop();
-    final backend = FolderBackend(config.folder);
+    final backend = _backendFor(config.folder);
     _engine = SyncEngine(
       backend: backend,
       vault: vault,
@@ -391,8 +397,17 @@ class SyncController extends ChangeNotifier {
     _watch?.cancel();
     _watch = null;
     _watchDelay?.cancel();
-    _engine?.vault.dispose();
+    final engine = _engine;
     _engine = null;
+    if (engine == null) return;
+    engine.cancel();
+    // The key goes once the round using it has stopped.
+    final running = _running;
+    if (running == null) {
+      engine.vault.dispose();
+    } else {
+      running.whenComplete(engine.vault.dispose).ignore();
+    }
   }
 
   void _changedHere() {
@@ -417,12 +432,15 @@ class SyncController extends ChangeNotifier {
       try {
         await _checkVault(engine.backend, config);
         final report = await engine.sync();
-        if (_engine != engine) return;
+        if (_engine != engine) continue;
         if (_watch == null) _watchFolder(engine.backend);
         _unreadable = List.unmodifiable(report.unreadable);
         _problem = null;
         _lastSynced = DateTime.now();
         _setStatus(SyncStatus.synced);
+      } on SyncCancelled {
+        // Turned off, or set up again, meanwhile; a round asked for since
+        // runs next.
       } on SyncBackendException catch (e) {
         _fail(engine, 'GPad can\'t reach ${config.folder}: ${e.message}');
       } on SyncException catch (e) {

@@ -545,24 +545,14 @@ class Notepad extends ChangeNotifier {
         _deleted.isNotEmpty ||
         _deletedFolders.isNotEmpty) {
       try {
-        _store.save(
-          notes: _unsaved,
-          folders: _unsavedFolders,
-          settings: _unsavedSettings,
-          deletedNoteIds: _deleted,
-          deletedFolderIds: _deletedFolders,
-        );
+        _saveUnsaved();
       } on SqliteException catch (error) {
         _saveError = error;
         _saveTimer = Timer(retryDelay, flush);
         notifyListeners();
         return false;
       }
-      _unsaved.clear();
-      _unsavedFolders.clear();
-      _unsavedSettings.clear();
-      _deleted.clear();
-      _deletedFolders.clear();
+      _clearUnsaved();
       onSaved?.call();
     }
     if (_saveError != null) {
@@ -594,14 +584,39 @@ class Notepad extends ChangeNotifier {
         note.title == _welcomeTitle;
   }
 
+  void _saveUnsaved() => _store.save(
+    notes: _unsaved,
+    folders: _unsavedFolders,
+    settings: _unsavedSettings,
+    deletedNoteIds: _deleted,
+    deletedFolderIds: _deletedFolders,
+  );
+
+  void _clearUnsaved() {
+    _unsaved.clear();
+    _unsavedFolders.clear();
+    _unsavedSettings.clear();
+    _deleted.clear();
+    _deletedFolders.clear();
+  }
+
   /// Puts notes and folders as other machines left them: creates, updates
   /// or deletes each of [changes], and adds [newNotes] (copies kept when
-  /// two machines changed a note at once) as new open notes. Saves it all
-  /// in one transaction, and returns whether saving worked.
+  /// two machines changed a note at once) as new open notes.
+  ///
+  /// Saves it all, and whatever [alsoSave] writes to the store, in one
+  /// transaction. If that fails, the notes go back to how they were, in
+  /// the window and on disk, and the error is rethrown. Returns false,
+  /// changing nothing, if earlier changes can't be saved first.
   bool applySynced(
     List<SyncedChange> changes, {
     List<Map<String, Object?>> newNotes = const [],
+    void Function()? alsoSave,
   }) {
+    // Then only sync's changes are unsaved below, and undoing them can't
+    // touch anyone's typing.
+    if (!flush()) return false;
+    final undo = _undoFor(changes);
     // Folders first, so notes find the folders they are in.
     for (final change in changes) {
       if (change.kind != RecordKind.folder) continue;
@@ -646,9 +661,59 @@ class Notepad extends ChangeNotifier {
       _unsaved.add(copy);
     }
     _unsavedFolders.addAll(_breakLoops(_folders));
-    final saved = flush();
+    try {
+      _store.transaction(() {
+        _saveUnsaved();
+        alsoSave?.call();
+      });
+    } catch (_) {
+      undo();
+      notifyListeners();
+      rethrow;
+    }
+    _clearUnsaved();
+    onSaved?.call();
     notifyListeners();
-    return saved;
+    return true;
+  }
+
+  /// Puts back what [applySynced] can change for [changes]: which notes and
+  /// folders there are, the changed notes' fields, every note's folder
+  /// (deleting a folder moves its notes up) and every folder's fields.
+  VoidCallback _undoFor(List<SyncedChange> changes) {
+    final notes = [..._notes];
+    final folders = [..._folders];
+    final noteFields = <Note, Map<String, Object?>>{};
+    for (final change in changes) {
+      if (change.kind != RecordKind.note) continue;
+      final note = _noteById(change.id);
+      if (note != null) noteFields[note] = noteData(note);
+    }
+    final noteFolders = {for (final note in notes) note: note.folderId};
+    final folderFields = {
+      for (final folder in folders) folder: folderData(folder),
+    };
+    return () {
+      _notes
+        ..clear()
+        ..addAll(notes);
+      _folders
+        ..clear()
+        ..addAll(folders);
+      for (final MapEntry(key: note, value: data) in noteFields.entries) {
+        final (text, title) = (note.text, note.title);
+        applyNoteData(note, data);
+        if (note.text != text) note.textVersion++;
+        if (note.title != title) note.titleVersion++;
+      }
+      for (final MapEntry(key: note, value: folderId) in noteFolders.entries) {
+        note.folderId = folderId;
+      }
+      for (final MapEntry(key: folder, value: data) in folderFields.entries) {
+        applyFolderData(folder, data);
+      }
+      _clearUnsaved();
+    };
   }
 
   @override

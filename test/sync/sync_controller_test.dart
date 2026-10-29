@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goatpad/src/notepad/notepad.dart';
@@ -39,6 +41,8 @@ void main() {
     Notepad notepad, {
     Keychain? keychain,
     String host = 'work-pc',
+    _Gate? gate,
+    bool watch = true,
   }) {
     final controller = SyncController(
       notepad,
@@ -47,6 +51,13 @@ void main() {
       uploadDelay: const Duration(milliseconds: 20),
       maxWait: const Duration(milliseconds: 200),
       hostName: host,
+      backendFor: gate == null && watch
+          ? null
+          : (folder) => _GatedBackend(
+              FolderBackend(folder),
+              gate ?? _Gate(),
+              watch: watch,
+            ),
     );
     controllers.add(controller);
     return controller;
@@ -71,8 +82,9 @@ void main() {
   Future<SyncController> setUpFirst(
     Notepad notepad, {
     Keychain? keychain,
+    bool watch = true,
   }) async {
-    final sync = controllerFor(notepad, keychain: keychain);
+    final sync = controllerFor(notepad, keychain: keychain, watch: watch);
     final checked = await sync.checkFolder(chosen);
     expect(checked.path, p.join(chosen, 'GPad'));
     expect(checked.vault, isNull);
@@ -203,7 +215,8 @@ void main() {
     final work = Notepad.load(NoteStore.inMemory());
     final note = work.newNote();
     work.editText(note, 'keep me');
-    final sync = await setUpFirst(work);
+    // Windows won't rename a folder something is watching.
+    final sync = await setUpFirst(work, watch: false);
     final folder = sync.config!.folder;
     final away = '$folder-away';
     await Directory(folder).rename(away);
@@ -250,6 +263,104 @@ void main() {
     );
   });
 
+  test('of two computers setting up one folder at once, one wins', () async {
+    final folder = p.join(chosen, 'GPad');
+    await Directory(folder).create();
+    final first = controllerFor(Notepad.load(NoteStore.inMemory()));
+    final second = controllerFor(Notepad.load(NoteStore.inMemory()));
+    Future<bool> setUp(SyncController sync) => sync
+        .create(
+          folder: folder,
+          passphrase: passphrase,
+          deviceName: '',
+          remember: false,
+        )
+        .then((_) => true, onError: (Object e) => e is! SyncBackendException);
+    final made = await Future.wait([setUp(first), setUp(second)]);
+    expect(made.where((m) => m), hasLength(1));
+    final winner = made.first ? first : second;
+    final loser = made.first ? second : first;
+    expect(loser.status, SyncStatus.off);
+    final header = VaultHeader.decode(
+      File(p.join(folder, FolderBackend.vaultFileName)).readAsBytesSync(),
+    );
+    expect(header.id, winner.config!.vault.id);
+  });
+
+  test('turning sync off mid-round stops the round there', () async {
+    final work = Notepad.load(NoteStore.inMemory());
+    final sync = await setUpFirst(work);
+    final home = Notepad.load(NoteStore.inMemory());
+    final gate = _Gate();
+    final homeSync = controllerFor(home, host: 'home', gate: gate);
+    final checked = await homeSync.checkFolder(chosen);
+    await homeSync.join(
+      folder: checked.path,
+      vault: checked.vault!,
+      passphrase: passphrase,
+      deviceName: '',
+      remember: false,
+    );
+    await settle(homeSync);
+
+    // Home is reading a new note from work when sync is turned off there.
+    work.editText(work.newNote(), 'from work');
+    await settle(sync);
+    gate.reads = true;
+    final round = homeSync.syncNow();
+    await gate.reached;
+    await homeSync.turnOff();
+    gate.open();
+    await round;
+    expect(homeSync.status, SyncStatus.off);
+    expect(home.keptNotes.map((n) => n.text), isNot(contains('from work')));
+  });
+
+  test('a round cut short leaves nothing behind for the next setup', () async {
+    final work = Notepad.load(NoteStore.inMemory());
+    final gate = _Gate();
+    final sync = controllerFor(work, gate: gate);
+    final first = p.join(chosen, 'GPad');
+    await Directory(first).create();
+    await sync.create(
+      folder: first,
+      passphrase: passphrase,
+      deviceName: 'Work PC',
+      remember: false,
+    );
+    await settle(sync);
+
+    // Turned off while a note is being written, then set up again in
+    // another folder before that write finishes.
+    final note = work.newNote();
+    work.editText(note, 'typed');
+    work.flush();
+    gate.writes = true;
+    final round = sync.syncNow();
+    await gate.reached;
+    await sync.turnOff();
+    final second = p.join(dir.path, 'Other', 'GPad');
+    await Directory(second).create(recursive: true);
+    await sync.create(
+      folder: second,
+      passphrase: 'another passphrase',
+      deviceName: 'Work PC',
+      remember: false,
+    );
+    gate.open();
+    await round;
+    await settle(sync);
+
+    // The old round didn't mark the note as uploaded to the new folder.
+    expect(sync.status, SyncStatus.synced);
+    expect(
+      Directory(p.join(second, 'records'))
+          .listSync()
+          .map((f) => p.basename(f.path)),
+      contains('${note.id}.gpad'),
+    );
+  });
+
   test('turning sync off forgets the key and keeps the notes', () async {
     final work = Notepad.load(NoteStore.inMemory());
     final note = work.newNote();
@@ -292,4 +403,59 @@ void main() {
       isEmpty,
     );
   });
+}
+
+/// Holds reads or writes, once [reads] or [writes] is set, until [open].
+class _Gate {
+  bool reads = false;
+  bool writes = false;
+  final _reached = Completer<void>();
+  final _open = Completer<void>();
+
+  /// Completes when a read or write is being held.
+  Future<void> get reached => _reached.future;
+
+  void open() => _open.complete();
+
+  Future<void> _pass(bool held) async {
+    if (!held || _open.isCompleted) return;
+    if (!_reached.isCompleted) _reached.complete();
+    await _open.future;
+  }
+}
+
+class _GatedBackend implements SyncBackend {
+  _GatedBackend(this.inner, this.gate, {this.watch = true});
+
+  final SyncBackend inner;
+  final _Gate gate;
+  final bool watch;
+
+  @override
+  Future<Uint8List> read(RemoteFile file) async {
+    final bytes = await inner.read(file);
+    await gate._pass(gate.reads);
+    return bytes;
+  }
+
+  @override
+  Future<RemoteFile> write(String recordId, Uint8List bytes) async {
+    final written = await inner.write(recordId, bytes);
+    await gate._pass(gate.writes);
+    return written;
+  }
+
+  @override
+  String get description => inner.description;
+  @override
+  Future<Uint8List?> readVault() => inner.readVault();
+  @override
+  Future<bool> createVault(Uint8List bytes) => inner.createVault(bytes);
+  @override
+  Future<List<RemoteFile>> list() => inner.list();
+  @override
+  Future<bool> deleteIfUnchanged(RemoteFile file) =>
+      inner.deleteIfUnchanged(file);
+  @override
+  Stream<void>? get changes => watch ? inner.changes : null;
 }

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
+
 import '../notepad/notepad.dart';
 import '../store/note_store.dart';
 import 'merge.dart';
@@ -19,6 +21,11 @@ class SyncException implements Exception {
 
   @override
   String toString() => 'SyncException: $message';
+}
+
+/// Thrown by a round that [SyncEngine.cancel] stopped.
+class SyncCancelled implements Exception {
+  const SyncCancelled();
 }
 
 /// What one round of [SyncEngine.sync] did.
@@ -63,7 +70,22 @@ class SyncEngine {
   /// read again only if they change.
   final _unreadable = <String, String?>{};
 
+  bool _cancelled = false;
+
   NoteStore get _store => notepad.store;
+
+  /// Stops a round under way at its next step, which throws
+  /// [SyncCancelled]: once the file it is reading or writing is done, it
+  /// doesn't use the key or touch the notes or what sync knows. For
+  /// turning sync off, or setting it up again, mid-round.
+  void cancel() => _cancelled = true;
+
+  /// Waits for [io], then stops if the round was cancelled meanwhile.
+  Future<T> _step<T>(Future<T> io) async {
+    final result = await io;
+    if (_cancelled) throw const SyncCancelled();
+    return result;
+  }
 
   /// Whether changes made here are waiting to go up.
   bool get hasPending => _store.pendingSync().any(
@@ -73,15 +95,19 @@ class SyncEngine {
   );
 
   Future<SyncReport> sync() async {
+    if (_cancelled) throw const SyncCancelled();
     final report = SyncReport();
     _flush();
-    final files = await backend.list();
+    final files = await _step(backend.list());
     final byRecord = <String, List<RemoteFile>>{};
     for (final file in files) {
       byRecord.putIfAbsent(file.recordId, () => []).add(file);
     }
 
     final copies = <RemoteFile>[];
+    // Records whose own file can't be read. Changes here wait rather than
+    // replace a version this GPad can't see, say from a newer GPad.
+    final blocked = <String>{};
     for (final MapEntry(key: id, value: group) in byRecord.entries) {
       // The record's own file first, then copies other tools made of it.
       group.sort(
@@ -96,26 +122,29 @@ class SyncEngine {
             state?.remoteTag == file.tag) {
           continue;
         }
+        void unreadable() {
+          _unreadable[file.name] = file.tag;
+          report.unreadable.add(file.name);
+          if (file.isCanonical) blocked.add(id);
+        }
+
         if (_unreadable.containsKey(file.name) &&
             _unreadable[file.name] == file.tag) {
-          report.unreadable.add(file.name);
+          unreadable();
           continue;
         }
         final SyncRecord record;
         try {
-          record = _open(id, await backend.read(file));
+          record = _open(id, await _step(backend.read(file)));
         } on FormatException {
-          _unreadable[file.name] = file.tag;
-          report.unreadable.add(file.name);
+          unreadable();
           continue;
         } on VaultException {
-          _unreadable[file.name] = file.tag;
-          report.unreadable.add(file.name);
+          unreadable();
           continue;
         }
         if (!_absorb(record, file, report)) {
-          _unreadable[file.name] = file.tag;
-          report.unreadable.add(file.name);
+          unreadable();
           continue;
         }
         if (!file.isCanonical) copies.add(file);
@@ -139,10 +168,13 @@ class SyncEngine {
       }
     }
 
-    await _upload(report);
-    // Copies are merged into the record's own file by now.
+    await _upload(report, blocked);
+    // Copies are merged into the record's own file by now, unless one
+    // changed since it was read; then it is read again next time. Copies
+    // of a record that couldn't be uploaded stay for other computers.
     for (final copy in copies) {
-      await backend.delete(copy);
+      if (blocked.contains(copy.recordId)) continue;
+      await _step(backend.deleteIfUnchanged(copy));
     }
     return report;
   }
@@ -286,39 +318,47 @@ class SyncEngine {
     final kind = remote.kind;
     final id = remote.id;
     final copy = merged.conflictCopy;
-    _store.transaction(() {
-      final saved = notepad.applySynced(
+    final bool saved;
+    try {
+      saved = notepad.applySynced(
         [
           if (!sameData(merged.data, local))
             SyncedChange(kind, id, merged.data),
         ],
         newNotes: [?copy],
+        // Saved with the notes, so a failure undoes both and the next round
+        // merges again from the start.
+        alsoSave: () {
+          // Checked after the change: putting the folder tree right may
+          // have moved it since.
+          final now = notepad.syncData(kind, id);
+          final inStep = !upload && sameData(now, remote.data);
+          final remoteData = jsonEncode(remote.data);
+          _store.saveSyncState(
+            id,
+            kind: kind.name,
+            upload: !inStep,
+            version: jsonEncode(version.toJson()),
+            base: remoteData,
+            commonVersion: jsonEncode(remote.version.toJson()),
+            common: remoteData,
+            remoteTag: tag,
+          );
+        },
       );
-      // Rolls back what sync noted; the notes stay as they are in the
-      // window and are saved when saving works again.
-      if (!saved) _flush();
-      // Checked after saving: putting the folder tree right may have moved
-      // it since.
-      final now = notepad.syncData(kind, id);
-      final inStep = !upload && sameData(now, remote.data);
-      final remoteData = jsonEncode(remote.data);
-      _store.saveSyncState(
-        id,
-        kind: kind.name,
-        upload: !inStep,
-        version: jsonEncode(version.toJson()),
-        base: remoteData,
-        commonVersion: jsonEncode(remote.version.toJson()),
-        common: remoteData,
-        remoteTag: tag,
+    } on SqliteException catch (e) {
+      throw SyncException(
+        'GPad can\'t save synced notes on this computer (${e.message})',
       );
-    });
+    }
+    if (!saved) _flush();
     if (copy != null) report?.conflicts++;
   }
 
-  Future<void> _upload(SyncReport report) async {
+  Future<void> _upload(SyncReport report, Set<String> blocked) async {
     _flush();
     for (final state in _store.pendingSync()) {
+      if (blocked.contains(state.id)) continue;
       final kind = RecordKind.values.byName(state.kind);
       final data = notepad.syncData(kind, state.id);
       if (state.version == null) {
@@ -342,9 +382,8 @@ class SyncEngine {
         savedAt: clock(),
       );
       final seq = state.localSeq;
-      final file = await backend.write(
-        state.id,
-        vault.seal(state.id, record.encode()),
+      final file = await _step(
+        backend.write(state.id, vault.seal(state.id, record.encode())),
       );
       // If it changed while it was being written, it stays pending, and the
       // next round uploads it again.

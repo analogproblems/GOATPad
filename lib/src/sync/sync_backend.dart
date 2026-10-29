@@ -57,7 +57,10 @@ abstract interface class SyncBackend {
   /// its new tag.
   Future<RemoteFile> write(String recordId, Uint8List bytes);
 
-  Future<void> delete(RemoteFile file);
+  /// Deletes [file], a copy another sync tool made, unless it has changed
+  /// since it was listed: then it stays, to be read again. Returns whether
+  /// it is gone.
+  Future<bool> deleteIfUnchanged(RemoteFile file);
 
   /// Completes when something in the store may have changed, so sync can
   /// look sooner than its next regular check. Null if the store can't

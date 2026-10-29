@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 
 import 'sync_backend.dart';
@@ -31,6 +32,11 @@ class FolderBackend implements SyncBackend {
 
   final String path;
 
+  /// Runs after each file is renamed into place, for tests that have
+  /// another computer write there at that moment.
+  @visibleForTesting
+  Future<void> Function()? afterRename;
+
   Directory get _records => Directory(p.join(path, 'records'));
   File get _vault => File(p.join(path, vaultFileName));
 
@@ -51,9 +57,34 @@ class FolderBackend implements SyncBackend {
   @override
   Future<bool> createVault(Uint8List bytes) => _guard(() async {
     await _records.create(recursive: true);
-    if (await _vault.exists()) return false;
-    await _writeAtomically(_vault, bytes);
-    return true;
+    final temp = _tempFor(_vault);
+    try {
+      await temp.writeAsBytes(bytes, flush: true);
+      // Claimed by an exclusive create, which only one of two computers
+      // can win, even on a shared or network drive. Then filled in by a
+      // rename, so nobody reads half a header.
+      try {
+        await _vault.create(exclusive: true);
+      } on FileSystemException {
+        if (await _vault.exists()) return false;
+        rethrow;
+      }
+      try {
+        await temp.rename(_vault.path);
+      } catch (_) {
+        // Give the claim up, rather than leave an empty vault file that
+        // nobody can join or replace.
+        await _vault.delete();
+        rethrow;
+      }
+      return true;
+    } finally {
+      try {
+        await temp.delete();
+      } on FileSystemException {
+        // Renamed into place, or never written.
+      }
+    }
   });
 
   @override
@@ -86,22 +117,39 @@ class FolderBackend implements SyncBackend {
       _guard(() async {
         await _records.create(recursive: true);
         final name = RemoteFile.nameFor(recordId);
-        final file = _fileFor(name);
-        await _writeAtomically(file, bytes);
         return RemoteFile(
           name: name,
           recordId: recordId,
-          tag: _tag(await file.stat()),
+          tag: await _writeAtomically(_fileFor(name), bytes),
         );
       });
 
   @override
-  Future<void> delete(RemoteFile file) => _guard(() async {
+  Future<bool> deleteIfUnchanged(RemoteFile file) => _guard(() async {
+    final listed = _fileFor(file.name);
+    // Renamed out of the way first, so a sync tool putting a new version
+    // there now makes a new file rather than one that gets deleted.
+    final claimed = _tempFor(listed);
     try {
-      await _fileFor(file.name).delete();
+      await listed.rename(claimed.path);
     } on PathNotFoundException {
-      // Already gone.
+      return true;
+    } on FileSystemException {
+      return false; // Open in another program, say; next round, then.
     }
+    if (file.tag != null && _tag(await claimed.stat()) == file.tag) {
+      await claimed.delete();
+      return true;
+    }
+    // Changed since it was read. Kept under a name of its own, which no
+    // sync tool is writing to, for the next round to read.
+    await claimed.rename(
+      _fileFor(
+        '${file.recordId} (changed while syncing '
+        '${_random.nextInt(1 << 32)}).gpad',
+      ).path,
+    );
+    return false;
   });
 
   @override
@@ -117,16 +165,25 @@ class FolderBackend implements SyncBackend {
 
   File _fileFor(String name) => File(p.join(_records.path, name));
 
-  Future<void> _writeAtomically(File file, Uint8List bytes) async {
-    final temp = File(
-      p.join(
-        file.parent.path,
-        '.${p.basename(file.path)}.${_random.nextInt(1 << 32)}.tmp',
-      ),
-    );
+  File _tempFor(File file) => File(
+    p.join(
+      file.parent.path,
+      '.${p.basename(file.path)}.${_random.nextInt(1 << 32)}.tmp',
+    ),
+  );
+
+  /// Writes [bytes] to [file] by renaming a finished temporary file into
+  /// place, and returns the tag of what was written. The tag is taken
+  /// before the rename, which keeps it: taken after, it could be the tag
+  /// of a file another computer put there in between.
+  Future<String> _writeAtomically(File file, Uint8List bytes) async {
+    final temp = _tempFor(file);
     try {
       await temp.writeAsBytes(bytes, flush: true);
+      final tag = _tag(await temp.stat());
       await temp.rename(file.path);
+      await afterRename?.call();
+      return tag;
     } catch (_) {
       try {
         await temp.delete();

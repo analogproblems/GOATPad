@@ -80,9 +80,10 @@ copy from a USB stick. Only one GPad can have the file open at a time; a
 second window tells you GPad is already open instead of risking your edits.
 
 With sync on, the encrypted copies live in a `GPad` folder inside the sync
-folder you chose. GPad remembers your passphrase in the system keychain
-(GNOME Keyring or KWallet on Linux, Credential Manager on Windows) if you
-let it, and asks for it each time it starts otherwise.
+folder you chose. If you let it, GPad keeps the key that unlocks them (not
+your passphrase) in the system keychain (GNOME Keyring or KWallet on Linux,
+Credential Manager on Windows); otherwise it asks for the passphrase each
+time it starts.
 
 ## Download a test build
 

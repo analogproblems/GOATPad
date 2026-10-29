@@ -523,7 +523,10 @@ class _SyncDialogState extends State<_SyncDialog> {
           'in the sync folder couldn\'t be opened, so GPad left '
           '${sync.unreadable.length == 1 ? 'it' : 'them'} alone. A file '
           'changed by something other than GPad, damaged, or saved by a '
-          'newer GPad reads this way.',
+          'newer GPad reads this way. Changes here to the '
+          '${sync.unreadable.length == 1 ? 'note in it wait until it' : 'notes in them wait until they'} '
+          'can be read: update GPad, or delete a damaged file from the sync '
+          'folder.',
           style: TextStyle(color: theme.colorScheme.error),
         ),
       ],
