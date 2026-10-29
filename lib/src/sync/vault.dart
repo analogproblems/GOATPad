@@ -180,6 +180,23 @@ class Vault {
   /// The note key, for the keychain.
   Uint8List exportKey() => _key.extractBytes();
 
+  /// Whether [header] holds this vault's note key, as it does after the
+  /// passphrase or recovery key changed on any computer.
+  bool belongsTo(VaultHeader header) {
+    if (header.id != id) return false;
+    try {
+      _aead.decrypt(
+        cipherText: header.check.sealed,
+        nonce: header.check.nonce,
+        key: _key,
+        additionalData: VaultCrypto._boxData(id, 'check'),
+      );
+      return true;
+    } on SodiumException {
+      return false;
+    }
+  }
+
   /// [plaintext] padded, encrypted and authenticated as record [recordId]
   /// of this vault: "GPAD", a format byte, the nonce, then the ciphertext.
   Uint8List seal(String recordId, List<int> plaintext) {
@@ -312,6 +329,64 @@ class VaultCrypto {
     } finally {
       passphraseKey.dispose();
       recoveryKey.dispose();
+    }
+  }
+
+  /// [header] locked with [passphrase] instead, with a new salt. The note
+  /// key stays, so notes need no encrypting again, and so does the
+  /// recovery key.
+  Future<VaultHeader> changePassphrase(
+    VaultHeader header,
+    Vault vault,
+    String passphrase, {
+    KdfParams kdf = KdfParams.moderate,
+  }) async {
+    if (!vault.belongsTo(header)) {
+      throw ArgumentError('That vault\'s key isn\'t in this header');
+    }
+    final salt = _sodium.randombytes.buf(_sodium.crypto.pwhash.saltBytes);
+    final key = await _derive(passphrase, salt, kdf);
+    try {
+      return VaultHeader(
+        id: header.id,
+        createdAt: header.createdAt,
+        kdf: kdf,
+        salt: salt,
+        passphraseBox: _wrap(vault._key, key, header.id, 'passphrase'),
+        recoveryBox: header.recoveryBox,
+        check: header.check,
+      );
+    } finally {
+      key.dispose();
+    }
+  }
+
+  /// [header] with a new recovery key, which is returned to show once. The
+  /// old one stops opening the vault file; the passphrase stays.
+  ({VaultHeader header, String recoveryKey}) newRecoveryKey(
+    VaultHeader header,
+    Vault vault,
+  ) {
+    if (!vault.belongsTo(header)) {
+      throw ArgumentError('That vault\'s key isn\'t in this header');
+    }
+    final recovery = _sodium.randombytes.buf(RecoveryKey.bytes);
+    final key = _recoveryWrapKey(header.id, recovery);
+    try {
+      return (
+        header: VaultHeader(
+          id: header.id,
+          createdAt: header.createdAt,
+          kdf: header.kdf,
+          salt: header.salt,
+          passphraseBox: header.passphraseBox,
+          recoveryBox: _wrap(vault._key, key, header.id, 'recovery'),
+          check: header.check,
+        ),
+        recoveryKey: RecoveryKey.encode(recovery),
+      );
+    } finally {
+      key.dispose();
     }
   }
 

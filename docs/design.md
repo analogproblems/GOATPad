@@ -316,8 +316,10 @@ doesn't care where the files live. Step 3 ships it in three parts:
    assessment for public apps. Release builds get GPad's OAuth client from
    CI secrets, and anyone can use their own (see
    [Google Drive](#google-drive) below).
-3. **Later in step 3:** changing the passphrase, making a new recovery key,
-   and syncing from the tray while the window is closed.
+3. **Changing the passphrase and making a new recovery key (built),** from
+   the sync window; see [Changing the passphrase or recovery
+   key](#changing-the-passphrase-or-recovery-key). Still to come: syncing
+   from the tray while the window is closed.
 
 ### What syncs
 
@@ -486,7 +488,7 @@ was deleted".
 - **The passphrase** (at least 10 characters) goes through Argon2id
   (libsodium's "moderate": 3 passes over 256 MiB, run off the UI thread)
   to a key that wraps the note key. Changing the passphrase rewraps one key
-  instead of re-encrypting every note.
+  instead of re-encrypting every note (see below).
 - **A recovery key,** 160 random bits shown once at setup as 32 characters
   (Crockford base32, so 0/O and 1/I/L can't be mixed up), also wraps the note
   key. GPad offers to copy it or save it to a file, and the setup dialog
@@ -497,6 +499,45 @@ was deleted".
   Credential Manager on Windows, through their own C APIs. Without a
   keychain, or if you untick "Remember", GPad asks for the passphrase each
   time it starts and keeps your notes local until you type it.
+
+### Changing the passphrase or recovery key
+
+The sync window's status page has **Change passphrase…** and **New
+recovery key…**. Both ask for the passphrase (or the recovery key) as it is
+now, checked against the vault file as it is now, then:
+
+- **A new passphrase** gets a new Argon2id salt, and the note key is wrapped
+  again under it. The recovery key and everything else in the vault file
+  stay as they were.
+- **A new recovery key** is 160 new random bits that wrap the note key in
+  place of the old ones, shown once like the first. The passphrase stays.
+
+GPad then replaces the vault file, but only if it is still what GPad read
+(compared byte for byte just before; on Drive, best effort, as Drive can't
+replace a file only if unchanged). If another computer changed it
+meanwhile, nothing is written and GPad asks you to try again. Either way
+the note key stays the same, so nothing else is written and syncing goes
+on.
+
+Every computer checks the vault file at the start of each round. A vault
+file with this vault's id but other contents is taken, and kept with the
+sync settings, only if the note key this computer holds opens its check
+box. One it doesn't open stops sync with a problem, as a different vault
+does. A computer that asks for the passphrase at each start tries the one
+typed against the vault file it kept, and then, if it can read it, against
+the vault file as it is now. So it takes the new passphrase once it can
+reach the notes. Before then (offline, or on Drive before signing in again
+without a keychain) the old one still works there, until it syncs.
+
+The file format doesn't change: the vault file has the same fields, so an
+older GPad reads it as before.
+
+**What it doesn't do:** the note key isn't replaced, so nothing is
+encrypted again. Someone who has the old passphrase (or recovery key) and
+a copy of the vault file from before, as a sync tool's file history may
+keep, can still open the notes, including later ones. Against that, turn
+sync off on every computer and set it up afresh in a new place, which makes
+a new note key; the notes stay on each computer and join up again.
 
 ## Threat model
 
@@ -510,7 +551,10 @@ GPad protects against:
 GPad does not protect against:
 
 - Malware or another user with access to an unlocked machine running GPad.
-- Someone who knows the passphrase or holds the recovery key.
+- Someone who knows the passphrase or holds the recovery key. Changing
+  them shuts out only someone without an old copy of the vault file (see
+  [Changing the passphrase or recovery
+  key](#changing-the-passphrase-or-recovery-key)).
 - Someone with the synced files learning how many notes and folders there
   are, roughly how long they are, and when they change.
 - Someone with write access to the synced files deleting them or putting

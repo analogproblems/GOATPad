@@ -83,6 +83,26 @@ void main() {
     });
   });
 
+  test('the vault is replaced only as it was read', () async {
+    final folder = p.join(dir.path, 'GPad');
+    final backend = FolderBackend(folder);
+    final first = Uint8List.fromList('{"vault": 1}'.codeUnits);
+    final second = Uint8List.fromList('{"vault": 2}'.codeUnits);
+    final third = Uint8List.fromList('{"vault": 3}'.codeUnits);
+    expect(await backend.replaceVault(first, second), isFalse);
+    expect(await backend.readVault(), isNull);
+    expect(await backend.createVault(first), isTrue);
+    // Changed elsewhere since it was read.
+    expect(await backend.replaceVault(second, third), isFalse);
+    expect(await backend.readVault(), first);
+    expect(await backend.replaceVault(first, second), isTrue);
+    expect(await backend.readVault(), second);
+    expect(Directory(folder).listSync().map((e) => p.basename(e.path)), {
+      'gpad-vault.json',
+      'records',
+    });
+  });
+
   test('a move that refuses to replace', () {
     final a = File(p.join(dir.path, 'a'))..writeAsStringSync('a');
     final b = p.join(dir.path, 'b');

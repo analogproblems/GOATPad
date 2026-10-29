@@ -101,7 +101,7 @@ final class DrivePlace extends SyncPlace {
 /// nothing secret: the vault file is public, and the key is in the
 /// keychain or nowhere.
 class SyncConfig {
-  const SyncConfig({
+  SyncConfig({
     required this.place,
     required this.vault,
     required this.deviceName,
@@ -115,9 +115,10 @@ class SyncConfig {
 
   final SyncPlace place;
 
-  /// The vault file as it was when this computer joined, so GPad can
-  /// unlock while the folder is out of reach.
-  final VaultHeader vault;
+  /// The vault file as this computer last saw it, so GPad can unlock
+  /// while the folder is out of reach. Kept up to date when the passphrase
+  /// or recovery key changes, here or on another computer.
+  VaultHeader vault;
 
   /// This computer's name, as it appears on conflict copies.
   final String deviceName;
@@ -221,8 +222,8 @@ class SyncController extends ChangeNotifier {
   bool _again = false;
   bool _disposed = false;
 
-  /// Whether [create] or [join] is under way.
-  bool _settingUp = false;
+  /// Whether [create], [join] or a change to the vault is under way.
+  bool _busy = false;
 
   /// Counts [_stop]s. A run's requests to Google end once it changes, so a
   /// round under way when sync is turned off or set up again never goes on
@@ -411,15 +412,15 @@ class SyncController extends ChangeNotifier {
     return signingUp.auth;
   }
 
-  /// Runs [setUp], unless another [create] or [join] is under way, as when
-  /// someone presses Enter twice.
-  Future<T> _settingUpWith<T>(Future<T> Function() setUp) async {
-    if (_settingUp) throw StateError('Sync is being set up already');
-    _settingUp = true;
+  /// Runs [steps], unless [create], [join] or a change to the vault is
+  /// under way already, as when someone presses Enter twice.
+  Future<T> _oneAtATime<T>(Future<T> Function() steps) async {
+    if (_busy) throw StateError('Sync is being set up or changed already');
+    _busy = true;
     try {
-      return await setUp();
+      return await steps();
     } finally {
-      _settingUp = false;
+      _busy = false;
     }
   }
 
@@ -430,7 +431,7 @@ class SyncController extends ChangeNotifier {
     required String passphrase,
     required String deviceName,
     required bool remember,
-  }) => _settingUpWith(() async {
+  }) => _oneAtATime(() async {
     final backend = _setupBackend(place);
     final made = await (await _vaultCrypto).create(passphrase, kdf: kdf);
     final bool created;
@@ -466,7 +467,7 @@ class SyncController extends ChangeNotifier {
     String? recoveryKey,
     required String deviceName,
     required bool remember,
-  }) => _settingUpWith(() async {
+  }) => _oneAtATime(() async {
     if (place is DrivePlace) _signingUpTo(place);
     final unlocked = await _unlock(vault, passphrase, recoveryKey);
     if (unlocked == null) return false;
@@ -476,6 +477,10 @@ class SyncController extends ChangeNotifier {
 
   /// Unlocks sync after a restart on a computer without a keychain, or
   /// whose keychain lost the key. Returns false for a wrong passphrase.
+  ///
+  /// If the passphrase changed on another computer since this one last
+  /// synced, the new one works as long as the vault file can be read now;
+  /// otherwise the old one still does, until this computer syncs again.
   Future<bool> unlock({
     String? passphrase,
     String? recoveryKey,
@@ -483,11 +488,138 @@ class SyncController extends ChangeNotifier {
   }) async {
     final config = _config;
     if (config == null) return false;
-    final vault = await _unlock(config.vault, passphrase, recoveryKey);
-    if (vault == null) return false;
+    var vault = await _unlock(config.vault, passphrase, recoveryKey);
+    if (vault == null) {
+      final latest = await _latestVault(config);
+      if (latest == null) return false;
+      vault = await _unlock(latest, passphrase, recoveryKey);
+      if (vault == null) return false;
+      // The same notes, under a passphrase changed elsewhere.
+      if (!vault.belongsTo(config.vault)) {
+        vault.dispose();
+        return false;
+      }
+      if (_config != config) {
+        vault.dispose();
+        return false;
+      }
+      _saveVault(config, latest);
+    }
     if (remember) await _remember(config.vault.id, vault);
     _run(config, vault);
     return true;
+  }
+
+  /// The vault file as it is now, if it can be read and differs from the
+  /// one [config] has.
+  Future<VaultHeader?> _latestVault(SyncConfig config) async {
+    final backend = switch (config.place) {
+      FolderPlace(:final path) => _backendFor(path),
+      DrivePlace(:final account) => DriveBackend(
+        DriveApi(() => _google, httpClient: _http),
+        account: account,
+      ),
+    };
+    try {
+      final bytes = await backend.readVault();
+      if (bytes == null) return null;
+      final header = VaultHeader.decode(bytes);
+      if (header.id != config.vault.id ||
+          listEquals(header.encode(), config.vault.encode())) {
+        return null;
+      }
+      return header;
+    } on SyncBackendException {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Locks the notes with [newPassphrase] from now on, on every computer as
+  /// it syncs. [passphrase] or [recoveryKey] has to unlock them as they are
+  /// now; returns false if it doesn't.
+  ///
+  /// The note key stays the same, so nothing is encrypted again: someone
+  /// who has the old passphrase and kept a copy of the old vault file can
+  /// still read notes synced later.
+  Future<bool> changePassphrase({
+    String? passphrase,
+    String? recoveryKey,
+    required String newPassphrase,
+  }) async {
+    final changed = await _changeVault(
+      passphrase,
+      recoveryKey,
+      (crypto, header, vault) async => (
+        await crypto.changePassphrase(header, vault, newPassphrase, kdf: kdf),
+        true,
+      ),
+    );
+    return changed ?? false;
+  }
+
+  /// Makes a new recovery key, and the old one stops opening the notes.
+  /// [passphrase] or [recoveryKey] has to unlock them first. Returns the new
+  /// key, to show once, or null if neither unlocks them.
+  Future<String?> newRecoveryKey({String? passphrase, String? recoveryKey}) =>
+      _changeVault(passphrase, recoveryKey, (crypto, header, vault) async {
+        final made = crypto.newRecoveryKey(header, vault);
+        return (made.header, made.recoveryKey);
+      });
+
+  /// Replaces the vault file with what [change] makes of it, once
+  /// [passphrase] or [recoveryKey] unlocks it, and returns what [change]
+  /// says; or null if neither unlocks it.
+  Future<T?> _changeVault<T>(
+    String? passphrase,
+    String? recoveryKey,
+    Future<(VaultHeader, T)> Function(
+      VaultCrypto crypto,
+      VaultHeader header,
+      Vault vault,
+    )
+    change,
+  ) => _oneAtATime(() async {
+    final config = _config;
+    final engine = _engine;
+    if (config == null || engine == null) {
+      throw StateError('Sync isn\'t running');
+    }
+    // As it is now, which may have changed on another computer.
+    final (:bytes, :header) = await _checkVault(
+      engine.backend,
+      config,
+      engine.vault,
+    );
+    final unlocked = await _unlock(header, passphrase, recoveryKey);
+    if (unlocked == null) return null;
+    try {
+      final (changed, result) = await change(
+        await _vaultCrypto,
+        header,
+        unlocked,
+      );
+      if (!await engine.backend.replaceVault(
+        bytes,
+        Uint8List.fromList(changed.encode()),
+      )) {
+        throw SyncBackendException(
+          'The passphrase or recovery key was just changed on another '
+          'computer. Try again.',
+        );
+      }
+      if (_config == config) _saveVault(config, changed);
+      return result;
+    } finally {
+      unlocked.dispose();
+    }
+  });
+
+  /// Keeps [header], a newer vault file of the same notes, with [config].
+  void _saveVault(SyncConfig config, VaultHeader header) {
+    config.vault = header;
+    notepad.store.setSetting(_configKey, jsonEncode(config.toJson()));
   }
 
   /// Whether the key is in the keychain, so GPad starts syncing without
@@ -741,7 +873,7 @@ class SyncController extends ChangeNotifier {
       }
       _setStatus(SyncStatus.syncing);
       try {
-        await _checkVault(engine.backend, config);
+        await _checkVault(engine.backend, config, engine.vault);
         final report = await engine.sync();
         if (_engine != engine) continue;
         if (_watch == null) _watchFolder(engine.backend);
@@ -773,8 +905,15 @@ class SyncController extends ChangeNotifier {
 
   /// Makes sure the vault in the folder is still this computer's, so a
   /// missing drive or a folder someone emptied isn't mistaken for every
-  /// note having been deleted.
-  Future<void> _checkVault(SyncBackend backend, SyncConfig config) async {
+  /// note having been deleted, and returns it as it is now.
+  ///
+  /// A passphrase or recovery key changed on another computer is kept
+  /// here, once [vault]'s key shows it is still the same notes.
+  Future<({Uint8List bytes, VaultHeader header})> _checkVault(
+    SyncBackend backend,
+    SyncConfig config,
+    Vault vault,
+  ) async {
     final bytes = await backend.readVault();
     if (bytes == null) {
       throw SyncException(switch (config.place) {
@@ -807,6 +946,17 @@ class SyncController extends ChangeNotifier {
               'Turn sync off and on again to join them.',
       });
     }
+    if (!listEquals(header.encode(), config.vault.encode())) {
+      if (!vault.belongsTo(header)) {
+        throw SyncException(
+          'The vault file in ${config.place.description} was replaced with '
+          'one this computer\'s key doesn\'t open, so nothing was synced. '
+          'Turn sync off and on again to choose what to do.',
+        );
+      }
+      if (_config == config) _saveVault(config, header);
+    }
+    return (bytes: bytes, header: header);
   }
 
   void _fail(SyncEngine engine, String message) {

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 
 import 'drive_api.dart';
 import 'sync_backend.dart';
@@ -140,6 +140,22 @@ class DriveBackend implements SyncBackend {
         }
       }
     }
+  }
+
+  @override
+  Future<bool> replaceVault(Uint8List old, Uint8List bytes) async {
+    final now = await readVault();
+    // What was just read, and which file it came from.
+    final vault = _vaultCache;
+    if (now == null || vault == null || !listEquals(now, old)) return false;
+    final written = await api.update(vault.id, bytes);
+    if (written == null) return false;
+    _vaultCache = (
+      id: written.id,
+      revision: written.headRevisionId,
+      bytes: bytes,
+    );
+    return true;
   }
 
   String get _vaultIdOrThrow =>

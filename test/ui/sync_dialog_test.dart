@@ -154,6 +154,78 @@ void main() {
     await _finish(tester, sync);
   });
 
+  testWidgets('changing the passphrase, then the recovery key', (tester) async {
+    const newPassphrase = 'orange whale kite meadow';
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = _controller(notepad);
+    final oldKey = (await tester.runAsync(() async {
+      final folder = p.join(dir.path, 'GPad');
+      await Directory(folder).create();
+      return sync.create(
+        place: FolderPlace(folder),
+        passphrase: _passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+    }))!;
+    final crypto = (await tester.runAsync(VaultCrypto.load))!;
+    await _pumpApp(tester, notepad, sync);
+    await _waitFor(tester, _inSidebar('Synced'));
+
+    await tester.tap(_inSidebar('Synced'));
+    await tester.pump();
+    await tester.tap(find.text('Change passphrase…'));
+    await tester.pump();
+    expect(find.text('Change your passphrase'), findsOneWidget);
+    final change = find.widgetWithText(FilledButton, 'Change passphrase');
+
+    await tester.enterText(_field('Current passphrase'), _passphrase);
+    await tester.enterText(_field('New passphrase'), newPassphrase);
+    await tester.enterText(_field('Type it again'), '$newPassphrase!');
+    await tester.tap(change);
+    await tester.pump();
+    expect(find.text('The two passphrases don\'t match.'), findsOneWidget);
+
+    await tester.enterText(_field('Current passphrase'), 'not my passphrase');
+    await tester.enterText(_field('Type it again'), newPassphrase);
+    await tester.tap(change);
+    await _waitFor(tester, find.textContaining('doesn\'t unlock'));
+    expect(find.text('Change your passphrase'), findsOneWidget);
+
+    await tester.enterText(_field('Current passphrase'), _passphrase);
+    await tester.tap(change);
+    await _waitFor(tester, find.textContaining('Passphrase changed.'));
+    final changed = sync.config!.vault;
+    expect(
+      await tester.runAsync(() => crypto.unlock(changed, _passphrase)),
+      isNull,
+    );
+    (await tester.runAsync(() => crypto.unlock(changed, newPassphrase)))!
+        .dispose();
+
+    await tester.tap(find.text('New recovery key…'));
+    await tester.pump();
+    expect(find.text('Make a new recovery key'), findsOneWidget);
+    await tester.enterText(_field('Passphrase'), newPassphrase);
+    await tester.tap(find.text('Make new key'));
+    await _waitFor(tester, find.text('Save your recovery key'));
+    expect(
+      find.text('Your old recovery key no longer opens them.'),
+      findsOneWidget,
+    );
+    final key = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(key.data, isNot(oldKey));
+    expect(crypto.unlockWithRecoveryKey(sync.config!.vault, oldKey), isNull);
+    crypto.unlockWithRecoveryKey(sync.config!.vault, key.data!)!.dispose();
+
+    await tester.tap(find.text('I\'ve saved my recovery key'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+    await tester.pump();
+    expect(find.text('Save your recovery key'), findsNothing);
+    await _finish(tester, sync);
+  });
+
   testWidgets('pressing Enter, then the button, joins once', (tester) async {
     final first = _controller(Notepad.load(NoteStore.inMemory()));
     await tester.runAsync(() async {

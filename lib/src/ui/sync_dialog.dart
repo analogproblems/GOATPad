@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../sync/google_auth.dart';
 import '../sync/sync_backend.dart';
 import '../sync/sync_controller.dart';
+import '../sync/sync_engine.dart' show SyncException;
 
 /// Sets sync up, unlocks it, or shows how it's going.
 Future<void> showSyncDialog(BuildContext context, SyncController sync) =>
@@ -32,7 +33,17 @@ Future<void> showSyncDialog(BuildContext context, SyncController sync) =>
   SyncStatus.signedOut => (icon: Icons.login, label: 'Sync paused: sign in'),
 };
 
-enum _Page { choose, create, join, recovery, unlock, signIn, status }
+enum _Page {
+  choose,
+  create,
+  join,
+  recovery,
+  unlock,
+  signIn,
+  status,
+  changePassphrase,
+  newRecoveryKey,
+}
 
 /// Where someone chose to sync through.
 enum _Where { drive, folder }
@@ -60,18 +71,26 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   final _folder = TextEditingController();
   final _passphrase = TextEditingController();
+  final _newPassphrase = TextEditingController();
   final _again = TextEditingController();
   final _recoveryKey = TextEditingController();
   final _clientId = TextEditingController();
   final _clientSecret = TextEditingController();
   final _passphraseFocus = FocusNode();
   final _recoveryKeyFocus = FocusNode();
+  final _newPassphraseFocus = FocusNode();
   late final _deviceName = TextEditingController(
     text: sync.config?.deviceName ?? sync.defaultDeviceName,
   );
 
   PlaceCheck? _checked;
   String? _newRecoveryKey;
+
+  /// Whether [_newRecoveryKey] replaced one, which stopped working.
+  bool _replacedRecoveryKey = false;
+
+  /// What the last change on the status page did.
+  String? _changed;
 
   /// Whether the person uses their own Google sign-in client.
   late bool _ownClient = sync.googleClient == null;
@@ -113,6 +132,7 @@ class _SyncDialogState extends State<_SyncDialog> {
     for (final c in [
       _folder,
       _passphrase,
+      _newPassphrase,
       _again,
       _recoveryKey,
       _clientId,
@@ -123,6 +143,7 @@ class _SyncDialogState extends State<_SyncDialog> {
     }
     _passphraseFocus.dispose();
     _recoveryKeyFocus.dispose();
+    _newPassphraseFocus.dispose();
     super.dispose();
   }
 
@@ -131,7 +152,9 @@ class _SyncDialogState extends State<_SyncDialog> {
     setState(() {
       _page = page;
       _error = null;
+      _changed = null;
       _passphrase.clear();
+      _newPassphrase.clear();
       _again.clear();
       _recoveryKey.clear();
       _useRecoveryKey = false;
@@ -150,6 +173,8 @@ class _SyncDialogState extends State<_SyncDialog> {
     try {
       await action();
     } on SyncBackendException catch (e) {
+      _error = e.message;
+    } on SyncException catch (e) {
       _error = e.message;
     } on FormatException catch (e) {
       _error = 'The vault file there can\'t be read: ${e.message}';
@@ -250,14 +275,19 @@ class _SyncDialogState extends State<_SyncDialog> {
     _go(checked.vault == null ? _Page.create : _Page.join);
   });
 
+  /// What is wrong with a new [passphrase], typed again as [again].
+  static String? _newPassphraseProblem(String passphrase, String again) {
+    if (passphrase.length < SyncController.minPassphraseLength) {
+      return 'Use at least ${SyncController.minPassphraseLength} characters.';
+    }
+    if (passphrase != again) return 'The two passphrases don\'t match.';
+    return null;
+  }
+
   Future<void> _create() => _work(() async {
     final passphrase = _passphrase.text;
-    if (passphrase.length < SyncController.minPassphraseLength) {
-      _error = 'Use at least ${SyncController.minPassphraseLength} characters.';
-      return;
-    }
-    if (passphrase != _again.text) {
-      _error = 'The two passphrases don\'t match.';
+    if (_newPassphraseProblem(passphrase, _again.text) case final problem?) {
+      _error = problem;
       return;
     }
     final key = await sync.create(
@@ -267,6 +297,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       remember: _remember,
     );
     _newRecoveryKey = key;
+    _replacedRecoveryKey = false;
     _go(_Page.recovery);
   });
 
@@ -293,10 +324,53 @@ class _SyncDialogState extends State<_SyncDialog> {
       remember: _remember,
     );
     if (!ok) {
-      _error = _wrongKeyMessage;
+      _error =
+          '$_wrongKeyMessage If it was changed on another computer and GPad '
+          'can\'t reach ${sync.config?.place.description} now, the old one '
+          'still works here.';
       return;
     }
     if (mounted) Navigator.of(context).pop();
+  });
+
+  Future<void> _changePassphrase() => _work(() async {
+    final passphrase = _newPassphrase.text;
+    if (_newPassphraseProblem(passphrase, _again.text) case final problem?) {
+      _error = problem;
+      return;
+    }
+    final ok = await sync.changePassphrase(
+      passphrase: _useRecoveryKey ? null : _passphrase.text,
+      recoveryKey: _useRecoveryKey ? _recoveryKey.text : null,
+      newPassphrase: passphrase,
+    );
+    if (!ok) {
+      _error = _wrongKeyMessage;
+      return;
+    }
+    _go(_Page.status);
+    if (mounted) {
+      setState(
+        () => _changed =
+            'Passphrase changed. Your other computers take the new one as '
+            'they sync.',
+      );
+    }
+  });
+
+  Future<void> _makeRecoveryKey() => _work(() async {
+    final key = await sync.newRecoveryKey(
+      passphrase: _useRecoveryKey ? null : _passphrase.text,
+      recoveryKey: _useRecoveryKey ? _recoveryKey.text : null,
+    );
+    if (key == null) {
+      _error = _wrongKeyMessage;
+      return;
+    }
+    _newRecoveryKey = key;
+    _replacedRecoveryKey = true;
+    _savedKey = false;
+    _go(_Page.recovery);
   });
 
   String get _wrongKeyMessage => _useRecoveryKey
@@ -363,6 +437,8 @@ class _SyncDialogState extends State<_SyncDialog> {
           _Page.unlock => 'Unlock sync',
           _Page.signIn => 'Sign in to Google',
           _Page.status => 'Sync',
+          _Page.changePassphrase => 'Change your passphrase',
+          _Page.newRecoveryKey => 'Make a new recovery key',
         }),
         content: SizedBox(
           width: 460,
@@ -402,6 +478,8 @@ class _SyncDialogState extends State<_SyncDialog> {
     _Page.unlock => _unlockBody(context),
     _Page.signIn => _signInBody(context),
     _Page.status => _statusBody(context),
+    _Page.changePassphrase => _changePassphraseBody(context),
+    _Page.newRecoveryKey => _newRecoveryKeyBody(context),
   };
 
   List<Widget> _actions(BuildContext context) {
@@ -469,6 +547,26 @@ class _SyncDialogState extends State<_SyncDialog> {
           child: const Text('Sync now'),
         ),
         FilledButton(onPressed: close, child: const Text('Close')),
+      ],
+      _Page.changePassphrase => [
+        TextButton(
+          onPressed: busy ? null : () => _go(_Page.status),
+          child: const Text('Back'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : _changePassphrase,
+          child: const Text('Change passphrase'),
+        ),
+      ],
+      _Page.newRecoveryKey => [
+        TextButton(
+          onPressed: busy ? null : () => _go(_Page.status),
+          child: const Text('Back'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : _makeRecoveryKey,
+          child: const Text('Make new key'),
+        ),
       ],
     };
   }
@@ -639,7 +737,12 @@ class _SyncDialogState extends State<_SyncDialog> {
       'random words work well.',
     ),
     const SizedBox(height: 12),
-    _passphraseField(autofocus: true, onSubmitted: null),
+    _passphraseField(
+      _passphrase,
+      focusNode: _passphraseFocus,
+      autofocus: true,
+      onSubmitted: null,
+    ),
     const SizedBox(height: 8),
     TextField(
       controller: _again,
@@ -679,6 +782,55 @@ class _SyncDialogState extends State<_SyncDialog> {
     _rememberBox(context),
   ];
 
+  List<Widget> _changePassphraseBody(BuildContext context) => [
+    const Text(
+      'Type your passphrase as it is now, then the new one. Your other '
+      'computers take the new one as they sync, and the old one stops '
+      'working.',
+    ),
+    const SizedBox(height: 12),
+    ..._keyFields(
+      label: 'Current passphrase',
+      onSubmitted: _newPassphraseFocus.requestFocus,
+    ),
+    _passphraseField(
+      _newPassphrase,
+      label: 'New passphrase',
+      focusNode: _newPassphraseFocus,
+      autofocus: false,
+      onSubmitted: null,
+    ),
+    const SizedBox(height: 8),
+    TextField(
+      controller: _again,
+      obscureText: !_showPassphrase,
+      decoration: const InputDecoration(labelText: 'Type it again'),
+      onSubmitted: (_) => _changePassphrase(),
+    ),
+    const SizedBox(height: 12),
+    _hint(context, _sameKeyHint('passphrase')),
+  ];
+
+  List<Widget> _newRecoveryKeyBody(BuildContext context) => [
+    const Text(
+      'GPad makes a new recovery key for you to save, and the old one stops '
+      'working on all your computers as they sync. Type your passphrase '
+      'first.',
+    ),
+    const SizedBox(height: 12),
+    ..._keyFields(onSubmitted: _makeRecoveryKey),
+    const SizedBox(height: 12),
+    _hint(context, _sameKeyHint('recovery key')),
+  ];
+
+  /// That the notes' own key stays the same, so an old [what] and an old
+  /// copy of the synced files still open them.
+  static String _sameKeyHint(String what) =>
+      'GPad doesn\'t encrypt your notes again: their own key stays the same. '
+      'Someone who has the old $what and a copy of your synced files from '
+      'before could still open them. If that worries you, turn sync off on '
+      'every computer and set it up afresh in a new place.';
+
   List<Widget> _signInBody(BuildContext context) => [
     Text(
       'Sync with ${sync.config?.place.description} is paused until GPad '
@@ -704,6 +856,10 @@ class _SyncDialogState extends State<_SyncDialog> {
         'computer: printed out, or in a password manager. GPad shows it '
         'only now.',
       ),
+      if (_replacedRecoveryKey) ...[
+        const SizedBox(height: 8),
+        const Text('Your old recovery key no longer opens them.'),
+      ],
       const SizedBox(height: 16),
       Container(
         width: double.infinity,
@@ -783,6 +939,24 @@ class _SyncDialogState extends State<_SyncDialog> {
               ? 'Remembered in this computer\'s keychain'
               : 'Asked for each time GPad starts',
         ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton(
+              onPressed: () => _go(_Page.changePassphrase),
+              child: const Text('Change passphrase…'),
+            ),
+            OutlinedButton(
+              onPressed: () => _go(_Page.newRecoveryKey),
+              child: const Text('New recovery key…'),
+            ),
+          ],
+        ),
+      ],
+      if (_changed case final changed?) ...[
+        const SizedBox(height: 12),
+        Text(changed),
       ],
       if (sync.unreadable.isNotEmpty) ...[
         const SizedBox(height: 8),
@@ -819,7 +993,10 @@ class _SyncDialogState extends State<_SyncDialog> {
     );
   }
 
-  List<Widget> _keyFields({required VoidCallback onSubmitted}) => [
+  List<Widget> _keyFields({
+    required VoidCallback onSubmitted,
+    String label = 'Passphrase',
+  }) => [
     if (_useRecoveryKey)
       TextField(
         controller: _recoveryKey,
@@ -832,7 +1009,13 @@ class _SyncDialogState extends State<_SyncDialog> {
         onSubmitted: (_) => onSubmitted(),
       )
     else
-      _passphraseField(autofocus: true, onSubmitted: onSubmitted),
+      _passphraseField(
+        _passphrase,
+        label: label,
+        focusNode: _passphraseFocus,
+        autofocus: true,
+        onSubmitted: onSubmitted,
+      ),
     Align(
       alignment: Alignment.centerLeft,
       child: TextButton(
@@ -856,16 +1039,19 @@ class _SyncDialogState extends State<_SyncDialog> {
     ),
   ];
 
-  Widget _passphraseField({
+  Widget _passphraseField(
+    TextEditingController controller, {
+    String label = 'Passphrase',
+    required FocusNode focusNode,
     required bool autofocus,
     required VoidCallback? onSubmitted,
   }) => TextField(
-    controller: _passphrase,
-    focusNode: _passphraseFocus,
+    controller: controller,
+    focusNode: focusNode,
     autofocus: autofocus,
     obscureText: !_showPassphrase,
     decoration: InputDecoration(
-      labelText: 'Passphrase',
+      labelText: label,
       suffixIcon: IconButton(
         tooltip: _showPassphrase ? 'Hide' : 'Show',
         icon: Icon(
