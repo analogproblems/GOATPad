@@ -175,5 +175,7 @@ GOATPad does not protect against:
 - Local AI naming, folder and group organizing, and search, run on the
   device (llama.cpp, or an existing Ollama install), so notes never leave it
   unencrypted.
+- Experimental: an Obsidian-style mind map of notes, with the links between
+  related notes found and kept up to date by the same local model.
 - macOS and mobile apps.
 - More sync backends, such as WebDAV or S3-compatible storage.
