@@ -113,7 +113,7 @@ can take them over later without a rewrite.
 - Deleting is a separate, deliberate action that moves the note to a trash
   kept for 30 days. Sync spreads deletes to every machine, so the trash is the
   safety net.
-- Tab groups mirror folders in v1. Ad hoc groups are an open question.
+- Tab groups always mirror folders. There are no ad hoc groups in v1.
 
 ## Themes and code colors
 
@@ -135,14 +135,47 @@ color.
 Code colors only apply to Code notes. Rich notes use the theme's text color,
 and Quill's color buttons are hidden for now.
 
-The choice is not saved yet; step 2 stores it with the other settings.
+The choices are saved with the other settings.
 
 ## Local storage (step 2)
 
-- Notes, folders and tab state live in a local SQLite database, saved a short
-  moment after each keystroke rather than on close.
-- Search uses SQLite FTS5 over note titles and text.
-- Closing the window is always safe: there is nothing unsaved to ask about.
+- **One SQLite file**, `notes.db`, in the app data folder:
+  `$XDG_DATA_HOME/gpad` (usually `~/.local/share/gpad`) on Linux and
+  `%LOCALAPPDATA%\GPad` on Windows. Local rather than roaming on Windows, so
+  a roaming profile never copies the database around. `GPAD_DATA_DIR` points
+  GPad at another folder, for a portable copy or for testing.
+- **The same SQLite everywhere.** The
+  [sqlite3](https://pub.dev/packages/sqlite3) package bundles one build of
+  SQLite (with FTS5) for every platform, checked against SHA-256 hashes
+  pinned in the package, instead of using whatever the system has.
+- **Saved as you type.** Typing is saved at most 300 ms after a keystroke,
+  even while you keep typing. Everything else (new notes, closing tabs,
+  trash, theme) is saved straight away, the selected tab with the next save,
+  and GPad saves again whenever the window loses focus or closes. Nothing
+  ever asks "save?".
+- **Crash-safe.** The database uses SQLite's write-ahead log with
+  `synchronous = FULL`, so every finished save is on disk before GPad moves
+  on. A crash or power cut can cost at most the last few hundred
+  milliseconds of typing, never a finished save and never the file. Each
+  save is one transaction, so it lands whole or not at all.
+- **If saving fails** (a full disk, a failing drive), the changes stay in
+  memory, a warning stays at the top of the window until a save works, and
+  GPad tries again every 5 seconds without waiting for more typing. "Try
+  again" retries at once. Closing the window while saves are failing asks
+  first, with "Keep GPad open" as the default.
+- **One window at a time.** GPad keeps the file locked while it runs. A
+  second GPad shows "GPad is already open" instead of loading the notes and
+  overwriting edits made in the first window. A crashed GPad releases the
+  lock.
+- **Schema.** `notes` (random 128-bit id, title, body, mode, language,
+  status open/closed/trashed, tab order, timestamps) and `settings` (theme,
+  selected tab). The version lives in `PRAGMA user_version`; a database from
+  a newer GPad is refused rather than changed. Random ids mean notes made on
+  two machines never clash once sync arrives.
+- **Trash.** Trashed notes are kept for 30 days and deleted the next time
+  GPad starts after that. "Delete forever" and "Empty trash" ask first.
+- **Still to come in step 2:** folders with matching tab groups, and search
+  using SQLite FTS5 over titles and text.
 
 ## Sync (step 3)
 

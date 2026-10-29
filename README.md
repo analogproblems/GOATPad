@@ -8,18 +8,18 @@ have.
 Paste something on your Windows work machine, close the window, and find it
 waiting in a tab on your Linux machine at home.
 
-![The editor lab: a pasted SQL query detected as Code and named from its comment](docs/images/editor-lab.png)
+![A pasted SQL query detected as Code and named from its comment](docs/images/editor-lab.png)
 
 ## Status
 
-Early. This is the **step 1 editor lab**: tabs, smart note modes and inline
-naming, with Quill as the rich-text editor (picked over Fleather in the lab).
-Nothing is saved yet.
+Early. Step 2, the local notepad, is under way: notes are saved as you type
+and your tabs come back when you reopen GPad. Folders, search and sync are
+still to come.
 
 | Step | What it delivers | State |
 | --- | --- | --- |
-| 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | In progress |
-| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | Next |
+| 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
+| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | In progress: saving, restore, trash and settings are in; folders and search next |
 | 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
@@ -37,15 +37,27 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 - **Your look.** Warm, Classic or Slate themes, each in light and dark, and
   code colors you can switch to a colorblind-safe or high-contrast scheme.
 
-## Try the editor lab
+## Try it
 
-1. Switch the welcome note to **Code** in the status bar to see its Markdown,
-   then back to **Rich**.
-2. Press Ctrl+N and paste code, JSON, an email or a Markdown list. Watch the
+1. Press Ctrl+N and paste code, JSON, an email or a Markdown list. Watch the
    mode and the suggested name change.
-3. Close a tab with Ctrl+W and reopen it from the sidebar.
+2. Close GPad without saving, then open it again. Your tabs, and what you
+   typed, are still there.
+3. Close a tab with Ctrl+W and reopen it from the sidebar. Right-click a note
+   to move it to the trash, where it stays for 30 days.
 4. Open **Appearance** (the palette button) to try the themes and code
-   colors.
+   colors. GPad remembers your choice.
+
+## Where your notes are
+
+GPad keeps everything in one SQLite file, `notes.db`:
+
+- **Linux:** `~/.local/share/gpad/` (or `$XDG_DATA_HOME/gpad/`)
+- **Windows:** `%LOCALAPPDATA%\GPad\`
+
+Set `GPAD_DATA_DIR` to use another folder, for example to run a portable
+copy from a USB stick. Only one GPad can have the file open at a time; a
+second window tells you GPad is already open instead of risking your edits.
 
 ## Download a test build
 

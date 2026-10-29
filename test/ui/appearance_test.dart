@@ -3,16 +3,22 @@ import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goatpad/src/app.dart';
 import 'package:goatpad/src/code_colors.dart';
+import 'package:goatpad/src/notepad/notepad.dart';
+import 'package:goatpad/src/store/note_store.dart';
 import 'package:re_editor/re_editor.dart';
 
-Future<void> _pumpApp(WidgetTester tester) async {
+/// Starts GPad on a fresh in-memory store, which opens on the Rich welcome
+/// note.
+Future<Notepad> _pumpApp(WidgetTester tester) async {
   tester.view.physicalSize = const Size(1280, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(const GPadApp());
+  final notepad = Notepad.load(NoteStore.inMemory());
+  await tester.pumpWidget(GPadApp(notepad: notepad));
   // Let the Quill toolbar's zero-length startup timers fire.
   await tester.pump(const Duration(milliseconds: 1));
+  return notepad;
 }
 
 /// Opens Appearance, picks Slate, Dark and colorblind-safe code colors, and
@@ -34,8 +40,8 @@ void main() {
   testWidgets('changing appearance keeps a Code note and recolors it', (
     tester,
   ) async {
-    await _pumpApp(tester);
-    await tester.tap(find.text('Sample config').last);
+    final notepad = await _pumpApp(tester);
+    notepad.pasteAsNewNote('{"sample": true, "items": [1, 2, 3]}');
     await tester.pump(const Duration(milliseconds: 100));
 
     final before = tester.widget<CodeEditor>(find.byType(CodeEditor));

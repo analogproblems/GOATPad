@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:goatpad/src/lab/note_editors.dart';
+import 'package:goatpad/src/ui/note_editors.dart';
 import 'package:goatpad/src/notes/mode_detector.dart';
 import 'package:goatpad/src/notes/note_mode.dart';
 
