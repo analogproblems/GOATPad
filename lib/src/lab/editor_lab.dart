@@ -211,7 +211,9 @@ class _EditorLabState extends State<EditorLab> {
 
   Widget _sidebar(BuildContext context) {
     final theme = Theme.of(context);
-    return ColoredBox(
+    // A Material, not a ColoredBox, so the note tiles' highlight and ink
+    // splashes paint on top of the sidebar color.
+    return Material(
       color: theme.colorScheme.surfaceContainerLow,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
