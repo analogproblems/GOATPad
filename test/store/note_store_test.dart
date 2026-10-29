@@ -212,6 +212,129 @@ void main() {
     db.close();
   });
 
+  group('search', () {
+    late NoteStore store;
+    setUp(() {
+      store = NoteStore.inMemory();
+      store.saveNotes([
+        _note(id: 'menu', text: 'Espresso, croissants and a Café crème.'),
+        _note(id: 'sql', text: 'SELECT price FROM menu WHERE item = "café";'),
+        _note(id: 'empty', text: ''),
+      ]);
+      // Titles: 'Query' for all but one.
+      final titled = _note(id: 'titled', text: 'Notes from the meeting')
+        ..title = 'Menu ideas';
+      store.saveNote(titled);
+    });
+    tearDown(() => store.close());
+
+    List<String> ids(String query) => [
+      for (final hit in store.search(query)) hit.noteId,
+    ];
+
+    test('finds part of a word, ignoring case and accents', () {
+      expect(ids('CAFE'), unorderedEquals(['menu', 'sql']));
+      expect(ids('roiss'), ['menu']);
+    });
+
+    test('needs every word, and ranks title matches first', () {
+      expect(ids('menu'), ['titled', 'sql']);
+      expect(ids('menu price'), ['sql']);
+      expect(ids('menu nothing'), isEmpty);
+    });
+
+    test('marks the matches in the title and the text around them', () {
+      final hit = store.search('ideas').single;
+      expect(hit.title, 'Menu ${SearchHit.markStart}ideas${SearchHit.markEnd}');
+      expect(hit.snippet, 'Notes from the meeting');
+
+      final body = store.search('price').single;
+      expect(body.snippet, contains('${SearchHit.markStart}price'));
+    });
+
+    test('short words and quotes are matched as typed', () {
+      expect(ids('a'), containsAll(['menu', 'sql', 'titled']));
+      expect(ids('"café";'), ['sql']);
+      expect(ids('= "'), ['sql']);
+      expect(ids('  '), isEmpty);
+    });
+
+    test('short words ignore case and accents too, alone or mixed', () {
+      store.saveNote(_note(id: 'oil', text: 'Motor ÖL, 5 Liter'));
+      expect(ids('öl'), ['oil']);
+      expect(ids('Ol'), ['oil']);
+      expect(ids('fe'), unorderedEquals(['menu', 'sql']));
+      expect(ids('motor öl'), ['oil']);
+      expect(ids('crème FE'), ['menu']);
+      expect(ids('crème öl'), isEmpty);
+      // An accent typed apart doesn't make a word long enough for the index.
+      expect(ids('fe\u0301'), unorderedEquals(['menu', 'sql']));
+      expect(ids('cre\u0300me fe\u0301'), ['menu']);
+      expect(ids('\u0301'), isEmpty);
+    });
+
+    test('marks short words where they are, however they were written', () {
+      store.saveNote(
+        _note(id: 'trip', text: 'Ask about the cafe\u0301 au lait')
+          ..title = 'İstanbul trip',
+      );
+      final hit = store.search('is fe au').single;
+      final (start, end) = (SearchHit.markStart, SearchHit.markEnd);
+      expect(hit.title, '$start\u0130s${end}tanbul trip');
+      expect(
+        hit.snippet,
+        'Ask about the ca${start}fe\u0301$end ${start}au$end lait',
+      );
+    });
+
+    test('follows edits and deletions', () {
+      store.saveNote(_note(id: 'menu', text: 'Tea and scones'));
+      expect(ids('croissant'), isEmpty);
+      expect(ids('scones'), ['menu']);
+
+      store.deleteNotes(['menu']);
+      expect(ids('scones'), isEmpty);
+    });
+  });
+
+  test('a crowd of trashed matches never hides a kept note', () {
+    final store = NoteStore.inMemory();
+    addTearDown(store.close);
+    store.saveNotes([
+      for (var i = 0; i < 60; i++)
+        _note(id: 't$i', text: 'ok', status: NoteStatus.trashed)
+          ..title = 'Milk $i'
+          ..updatedAt = DateTime(2026, 10, 29, 12, i),
+    ]);
+    // Matches only in its text, and is the oldest: last but for the trash.
+    store.saveNote(_note(id: 'kept', text: 'Buy milk, ok?'));
+
+    for (final query in ['milk', 'ok']) {
+      final hits = store.search(query);
+      expect(hits, hasLength(50));
+      expect(hits.first.noteId, 'kept', reason: query);
+    }
+  });
+
+  test('upgrading from folders indexes the notes already there', () {
+    final path = '${temp.path}/notes.db';
+    final store = NoteStore.open(path);
+    store.saveNote(_note(text: 'Remember the milk'));
+    // Back to schema 2: no search index yet.
+    store.database.execute('''
+      DROP TRIGGER notes_fts_insert;
+      DROP TRIGGER notes_fts_delete;
+      DROP TRIGGER notes_fts_update;
+      DROP TABLE notes_fts;
+    ''');
+    store.database.userVersion = 2;
+    store.close();
+
+    final upgraded = NoteStore.open(path);
+    expect(upgraded.search('milk').single.noteId, 'a1');
+    upgraded.close();
+  });
+
   test('notes from a newer GPad are refused rather than changed', () {
     final path = '${temp.path}/notes.db';
     sqlite3.open(path)

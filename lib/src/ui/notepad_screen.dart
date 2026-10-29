@@ -6,6 +6,7 @@ import '../notes/mode_detector.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
 import 'note_editors.dart';
+import 'search_palette.dart';
 import 'sidebar.dart';
 import 'tab_strip.dart';
 
@@ -31,6 +32,14 @@ class NotepadScreen extends StatelessWidget {
               control: true,
               shift: true,
             ): _pasteAsNewNote,
+            const SingleActivator(LogicalKeyboardKey.keyP, control: true): () =>
+                showSearchPalette(context, notepad: notepad),
+            const SingleActivator(
+              LogicalKeyboardKey.keyF,
+              control: true,
+              shift: true,
+            ): () =>
+                showSearchPalette(context, notepad: notepad),
             const SingleActivator(LogicalKeyboardKey.keyW, control: true): () {
               if (note != null) notepad.close(note);
             },
