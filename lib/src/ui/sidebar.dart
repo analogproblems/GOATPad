@@ -130,7 +130,7 @@ class _SidebarState extends State<Sidebar> {
           SyncStatus.problem ||
           SyncStatus.locked ||
           SyncStatus.signedOut => true,
-          _ => sync.unreadable.isNotEmpty,
+          _ => sync.unreadable.isNotEmpty || sync.tooLarge.isNotEmpty,
         };
         final color = attention
             ? theme.colorScheme.error

@@ -39,6 +39,11 @@ class SyncReport {
   /// Files that couldn't be opened: changed, damaged, too large, from
   /// another vault or from a newer GPad. They are left alone.
   final unreadable = <String>[];
+
+  /// Notes too large to sync, by id: encrypted, they would be bigger than
+  /// other computers read. Changes to them wait here until they are
+  /// smaller.
+  final tooLarge = <String>[];
 }
 
 /// Brings the notes here and in the remote store in step.
@@ -69,6 +74,11 @@ class SyncEngine {
   /// Files that couldn't be opened, by name, with their tags, so they are
   /// read again only if they change.
   final _unreadable = <String, String?>{};
+
+  /// Notes found too large to upload, with how far they had been changed
+  /// here and which version they were, so they are encrypted again only
+  /// once either changes.
+  final _tooLarge = <String, (int, String?)>{};
 
   bool _cancelled = false;
 
@@ -406,9 +416,21 @@ class SyncEngine {
         savedAt: clock(),
       );
       final seq = state.localSeq;
-      final file = await _step(
-        backend.write(state.id, vault.seal(state.id, record.encode())),
-      );
+      final seen = (seq, state.version);
+      if (_tooLarge[state.id] == seen) {
+        report.tooLarge.add(state.id);
+        continue;
+      }
+      final sealed = vault.seal(state.id, record.encode());
+      // Other computers would refuse it, so it doesn't go up, and the copy
+      // already there stays as it is.
+      if (sealed.length > backend.recordLimit) {
+        _tooLarge[state.id] = seen;
+        report.tooLarge.add(state.id);
+        continue;
+      }
+      _tooLarge.remove(state.id);
+      final file = await _step(backend.write(state.id, sealed));
       // If it changed while it was being written, it stays pending, and the
       // next round uploads it again.
       _store.saveSyncState(

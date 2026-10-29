@@ -604,13 +604,16 @@ door a second GPad knocks on, pasting, links and CI. What changed:
 - Links in Rich notes open only if they are web (`http`, `https`) or mail
   (`mailto`) links. A pasted page or Markdown file can carry links of other
   schemes, which the system hands to whichever program claims them.
-- Files in the sync folder or Drive are read only up to a limit far past
-  anything GPad writes: 64 KB for the vault file, 128 MB for a note or
-  folder. A bigger one is reported as unreadable instead of filling the
-  memory.
+- Files in the sync folder or Drive are read only up to a limit: 64 KB for
+  the vault file, far past GPad's, and 128 MB for a note or folder. A
+  bigger one is reported as unreadable instead of filling the memory. GPad
+  doesn't upload a note that would be bigger, encrypted, than other
+  computers read: it stays on this computer, named in the sync window, and
+  its changes go up once it is smaller.
 - On Linux, GPad's notes folder is private to its owner (mode 700), since
   the notes on the computer aren't encrypted and some distributions let
-  other accounts into home folders.
+  other accounts into home folders. A folder set with `GPAD_DATA_DIR` on a
+  drive without Linux permissions, like FAT, can't be.
 - CI pins every action to a commit rather than a tag, which its owner could
   move to other code, and Dependabot proposes updates. Checkouts keep no
   GitHub token, so nothing a build runs can use it.

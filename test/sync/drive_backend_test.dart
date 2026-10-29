@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,8 @@ import 'package:goatpad/src/sync/google_auth.dart';
 import 'package:goatpad/src/sync/sync_backend.dart';
 import 'package:goatpad/src/sync/sync_engine.dart';
 import 'package:goatpad/src/sync/vault.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'fake_drive.dart';
 
@@ -166,7 +169,40 @@ void main() {
       expect(await calls.get(file.id), isNull);
     });
 
-    test('a download stops at its size limit', () async {
+    test('a download stops reading once past its size limit', () async {
+      var sent = 0;
+      Stream<List<int>> endless() async* {
+        while (true) {
+          sent++;
+          yield List.filled(100, 0);
+        }
+      }
+
+      final client = MockClient.streaming((request, _) async {
+        if (request.url.host == 'oauth2.googleapis.com') {
+          final token = {'access_token': 'a', 'expires_in': 3600};
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(jsonEncode(token))),
+            200,
+          );
+        }
+        return http.StreamedResponse(endless(), 200);
+      });
+      final auth = GoogleAuth(
+        FakeDrive.ownClient,
+        'refresh',
+        httpClient: client,
+      );
+      final calls = DriveApi(() => auth, httpClient: client);
+      await expectLater(
+        calls.download('f', name: 'r.gpad', maxBytes: 1000),
+        throwsA(isA<FileTooLarge>()),
+      );
+      // Eleven chunks pass the limit; a few more may be on their way.
+      expect(sent, inInclusiveRange(11, 20));
+    });
+
+    test('a download over its size limit names the file', () async {
       final calls = api();
       final file = await calls.create(
         name: 'r.gpad',

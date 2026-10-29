@@ -84,7 +84,8 @@ starting GPad again brings the open one to the front instead.
 
 `notes.db` isn't encrypted, so anyone who can use your computer account can
 read it. On Linux GPad makes its folder private to your account; on Windows
-your local app data folder already is.
+your local app data folder already is. A folder on a USB stick or another
+drive that doesn't keep Linux permissions, like FAT, can't be made private.
 
 With sync on, the encrypted copies live in a `GPad` folder in your Google
 Drive, or inside the sync folder you chose. If you let it, GPad keeps the key

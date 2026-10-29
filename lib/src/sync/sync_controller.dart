@@ -213,6 +213,7 @@ class SyncController extends ChangeNotifier {
   String? _problem;
   DateTime? _lastSynced;
   List<String> _unreadable = const [];
+  List<String> _tooLarge = const [];
   Timer? _soon;
   DateTime? _firstPending;
   Timer? _poll;
@@ -239,6 +240,10 @@ class SyncController extends ChangeNotifier {
 
   /// Files in the sync folder that couldn't be opened.
   List<String> get unreadable => _unreadable;
+
+  /// The titles of notes too large to sync, which stay on this computer
+  /// until they are smaller.
+  List<String> get tooLarge => _tooLarge;
 
   /// What this computer is called, unless someone names it.
   String get defaultDeviceName {
@@ -658,6 +663,7 @@ class SyncController extends ChangeNotifier {
     }
     _problem = null;
     _unreadable = const [];
+    _tooLarge = const [];
     _setStatus(SyncStatus.off);
   }
 
@@ -878,6 +884,13 @@ class SyncController extends ChangeNotifier {
         if (_engine != engine) continue;
         if (_watch == null) _watchFolder(engine.backend);
         _unreadable = List.unmodifiable(report.unreadable);
+        final titles = {
+          for (final n in [...notepad.keptNotes, ...notepad.trashedNotes])
+            n.id: n.title,
+        };
+        _tooLarge = List.unmodifiable([
+          for (final id in report.tooLarge) titles[id] ?? 'A note',
+        ]);
         _problem = null;
         _lastSynced = DateTime.now();
         _setStatus(SyncStatus.synced);

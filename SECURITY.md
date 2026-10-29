@@ -27,8 +27,10 @@ release only.
   Service on Linux, the Credential Manager on Windows), never in a plain
   file.
 - **Notes on your computer** are not encrypted. On Linux their folder is
-  private to your account; on Windows they live in your own local app data
-  folder. Anyone who can use your unlocked account can read them.
+  private to your account (unless you moved it to a drive without Linux
+  permissions, like a FAT USB stick); on Windows they live in your own
+  local app data folder. Anyone who can use your unlocked account can read
+  them.
 - **Nothing is sent anywhere** but your encrypted notes, to the place you
   chose. GPad has no telemetry.
 

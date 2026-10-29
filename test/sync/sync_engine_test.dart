@@ -602,6 +602,42 @@ void main() {
     expect(home.titles, ['Fine']);
   });
 
+  test('a note too large for other computers waits here', () async {
+    final note = work.write('Big', 'small at first');
+    await work.sync();
+    await home.sync();
+    final file = File(p.join(folder, 'records', '${note.id}.gpad'));
+    final uploaded = file.readAsBytesSync();
+
+    // Text under the limit, which encrypted, with the note's other fields
+    // and padding, goes over it.
+    work.backend.recordLimit = 4096;
+    work.notepad.editText(note, 'x' * 3900);
+    var report = await work.sync();
+    expect(report.tooLarge, [note.id]);
+    expect(report.uploaded, 0);
+    expect(file.readAsBytesSync(), uploaded);
+    expect(
+      work.notepad.store.pendingSync().map((s) => s.id),
+      contains(note.id),
+    );
+    // Not encrypted again, nor uploaded, until it changes.
+    report = await work.sync();
+    expect(report.tooLarge, [note.id]);
+    expect(file.readAsBytesSync(), uploaded);
+    await home.sync();
+    expect(home.note('Big').text, 'small at first');
+
+    // Smaller again, it goes up.
+    work.notepad.editText(note, 'x' * 3000);
+    report = await work.sync();
+    expect(report.tooLarge, isEmpty);
+    expect(report.uploaded, 1);
+    expect(file.readAsBytesSync().length, lessThanOrEqualTo(4096));
+    await home.sync();
+    expect(home.note('Big').text, 'x' * 3000);
+  });
+
   test('an old version put back is replaced by the latest', () async {
     work.write('Draft', 'one');
     await work.sync();
@@ -695,6 +731,8 @@ class _SlowBackend implements SyncBackend {
 
   @override
   String get description => inner.description;
+  @override
+  int get recordLimit => inner.recordLimit;
   @override
   Future<Uint8List?> readVault() => inner.readVault();
   @override

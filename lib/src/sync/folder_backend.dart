@@ -53,9 +53,10 @@ class FolderBackend implements SyncBackend {
   @visibleForTesting
   bool Function(String source, String target) moveVault = moveNoReplace;
 
-  /// The most of a file GPad reads; tests lower them.
-  @visibleForTesting
+  @override
   int recordLimit = SyncBackend.maxRecordBytes;
+
+  /// The most of the vault file GPad reads; tests lower it.
   @visibleForTesting
   int vaultLimit = SyncBackend.maxVaultBytes;
 

@@ -46,9 +46,10 @@ class DriveBackend implements SyncBackend {
   @visibleForTesting
   Future<void> Function()? beforePublish;
 
-  /// The most of a file GPad reads; tests lower them.
-  @visibleForTesting
+  @override
   int recordLimit = SyncBackend.maxRecordBytes;
+
+  /// The most of the vault file GPad reads; tests lower it.
   @visibleForTesting
   int vaultLimit = SyncBackend.maxVaultBytes;
 

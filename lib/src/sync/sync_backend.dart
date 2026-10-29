@@ -53,6 +53,11 @@ abstract interface class SyncBackend {
   /// The most of the vault file GPad reads. GPad's are under 1 KB.
   static const maxVaultBytes = 64 << 10;
 
+  /// The most of a record file this store takes: [maxRecordBytes], unless
+  /// a test lowers it. GPad reads no more of one, and so writes none
+  /// bigger: other computers couldn't read it.
+  int get recordLimit;
+
   /// Where the notes go, for people to read, like a folder's path.
   String get description;
 
