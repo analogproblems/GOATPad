@@ -165,6 +165,8 @@ GOATPad does not protect against:
 ## Release (step 4)
 
 - Windows: a portable zip that runs without admin rights, then an installer.
+  The zip carries the Visual C++ runtime DLLs next to `goatpad.exe`, since
+  many machines (including the first one we tried) don't have them.
   Unsigned builds show a SmartScreen warning on first run; code signing costs
   money and can come later.
 - Linux: AppImage first, then Flatpak and .deb.

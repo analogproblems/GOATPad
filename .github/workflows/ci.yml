@@ -65,6 +65,17 @@ jobs:
           channel: stable
           cache: true
       - run: flutter build windows --release
+      # Flutter apps need the Visual C++ runtime, which many PCs (and locked-down
+      # work machines) don't have. Shipping it next to goatpad.exe keeps the
+      # build portable: unzip and run, no installer or admin rights.
+      - name: Bundle the Visual C++ runtime
+        shell: pwsh
+        run: |
+          $release = "build/windows/x64/runner/Release"
+          foreach ($dll in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            Copy-Item -Path "$env:WINDIR\System32\$dll" -Destination $release -ErrorAction Stop
+          }
+          Get-ChildItem $release -Filter *.dll | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
           name: goatpad-windows-x64
