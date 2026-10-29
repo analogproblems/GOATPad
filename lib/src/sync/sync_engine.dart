@@ -36,8 +36,8 @@ class SyncReport {
   /// Notes changed here and on another machine at once, now kept twice.
   int conflicts = 0;
 
-  /// Files that couldn't be opened: changed, damaged, from another vault
-  /// or from a newer GPad. They are left alone.
+  /// Files that couldn't be opened: changed, damaged, too large, from
+  /// another vault or from a newer GPad. They are left alone.
   final unreadable = <String>[];
 }
 
@@ -140,6 +140,9 @@ class SyncEngine {
           unreadable();
           continue;
         } on VaultException {
+          unreadable();
+          continue;
+        } on FileTooLarge {
           unreadable();
           continue;
         }

@@ -591,6 +591,17 @@ void main() {
     expect(work.note('Damaged').text, 'edited at home');
   });
 
+  test('a file too large to be GPad\'s is reported, not read', () async {
+    work.write('Fine', 'ok');
+    await work.sync();
+    final big = '${'e' * 32}.gpad';
+    File(p.join(folder, 'records', big)).writeAsBytesSync(Uint8List(2048));
+    home.backend.recordLimit = 1024;
+    final report = await home.sync();
+    expect(report.unreadable, [big]);
+    expect(home.titles, ['Fine']);
+  });
+
   test('an old version put back is replaced by the latest', () async {
     work.write('Draft', 'one');
     await work.sync();

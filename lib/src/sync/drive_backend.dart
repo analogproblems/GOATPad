@@ -46,6 +46,12 @@ class DriveBackend implements SyncBackend {
   @visibleForTesting
   Future<void> Function()? beforePublish;
 
+  /// The most of a file GPad reads; tests lower them.
+  @visibleForTesting
+  int recordLimit = SyncBackend.maxRecordBytes;
+  @visibleForTesting
+  int vaultLimit = SyncBackend.maxVaultBytes;
+
   /// Each record's own file, by record id, as of the last [list].
   final _canonical = <String, String>{};
 
@@ -91,7 +97,11 @@ class DriveBackend implements SyncBackend {
         cached.revision == vault.headRevisionId) {
       return cached.bytes;
     }
-    final bytes = await api.download(vault.id);
+    final bytes = await api.download(
+      vault.id,
+      name: vaultFileName,
+      maxBytes: vaultLimit,
+    );
     if (bytes == null) return null;
     _vaultCache = (id: vault.id, revision: vault.headRevisionId, bytes: bytes);
     return bytes;
@@ -204,7 +214,9 @@ class DriveBackend implements SyncBackend {
   @override
   Future<Uint8List> read(RemoteFile file) async {
     final id = _byName[file.name];
-    final bytes = id == null ? null : await api.download(id);
+    final bytes = id == null
+        ? null
+        : await api.download(id, name: file.name, maxBytes: recordLimit);
     if (bytes == null) {
       throw SyncBackendException('${file.name} is gone from Google Drive');
     }

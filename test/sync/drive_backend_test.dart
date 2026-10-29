@@ -147,14 +147,42 @@ void main() {
         appProperties: {'gpad': 'record'},
         content: content,
       );
-      expect(await calls.download(file.id), content);
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        content,
+      );
       final updated = await calls.update(file.id, bytes('new'));
       expect(updated!.headRevisionId, isNot(file.headRevisionId));
-      expect(await calls.download(file.id), bytes('new'));
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        bytes('new'),
+      );
       await calls.delete(file.id);
-      expect(await calls.download(file.id), isNull);
+      expect(
+        await calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        isNull,
+      );
       expect(await calls.update(file.id, bytes('x')), isNull);
       expect(await calls.get(file.id), isNull);
+    });
+
+    test('a download stops at its size limit', () async {
+      final calls = api();
+      final file = await calls.create(
+        name: 'r.gpad',
+        appProperties: {'gpad': 'record'},
+        content: Uint8List(301),
+      );
+      await expectLater(
+        calls.download(file.id, name: 'r.gpad', maxBytes: 300),
+        throwsA(
+          isA<FileTooLarge>().having(
+            (e) => e.message,
+            'message',
+            contains('r.gpad'),
+          ),
+        ),
+      );
     });
   });
 
@@ -246,6 +274,14 @@ void main() {
       expect(drive.requests, ['GET /drive/v3/files']);
     });
 
+    test('a vault over the size limit isn\'t read', () async {
+      await backend().createVault(header());
+      final home = backend()..vaultLimit = header().length - 1;
+      await expectLater(home.readVault(), throwsA(isA<FileTooLarge>()));
+      home.vaultLimit = header().length;
+      expect(await home.readVault(), header());
+    });
+
     test('a vault in the bin is missing', () async {
       await backend().createVault(header());
       drive.trash(drive.tagged('folder').single.id);
@@ -274,6 +310,15 @@ void main() {
       expect(drive.tagged('record').single.parents, [
         drive.tagged('records').single.id,
       ]);
+    });
+
+    test('a file over the size limit isn\'t read', () async {
+      await work.write(record, Uint8List(101));
+      final listed = (await work.list()).single;
+      work.recordLimit = 100;
+      await expectLater(work.read(listed), throwsA(isA<FileTooLarge>()));
+      work.recordLimit = 101;
+      expect(await work.read(listed), hasLength(101));
     });
 
     test('the tag is the written version, even if replaced at once', () async {

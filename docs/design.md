@@ -594,6 +594,38 @@ GPad does not protect against:
   and secret are public, as for every desktop app. Such an app would still
   need you to sign in and allow it, and would see only ciphertext.
 
+### Security review (step 4)
+
+Before the first release, every part of GPad that takes input from outside
+or holds a secret was read again with an attacker in mind: the Google
+sign-in, encryption and the vault file, both sync stores, the keychain, the
+door a second GPad knocks on, pasting, links and CI. What changed:
+
+- Links in Rich notes open only if they are web (`http`, `https`) or mail
+  (`mailto`) links. A pasted page or Markdown file can carry links of other
+  schemes, which the system hands to whichever program claims them.
+- Files in the sync folder or Drive are read only up to a limit far past
+  anything GPad writes: 64 KB for the vault file, 128 MB for a note or
+  folder. A bigger one is reported as unreadable instead of filling the
+  memory.
+- On Linux, GPad's notes folder is private to its owner (mode 700), since
+  the notes on the computer aren't encrypted and some distributions let
+  other accounts into home folders.
+- CI pins every action to a commit rather than a tag, which its owner could
+  move to other code, and Dependabot proposes updates. Checkouts keep no
+  GitHub token, so nothing a build runs can use it.
+- [SECURITY.md](../SECURITY.md) says how to report a problem privately.
+
+Checked and left as they were: sign-in uses PKCE and a random state, through
+a server that listens on 127.0.0.1 only until Google sends the browser back.
+The work and memory settings a vault file asks of Argon2id are bounded.
+Each record is authenticated together with its vault's id and its own, so
+files can't be swapped between notes or vaults. SQL statements take
+parameters, never pasted text. GPad logs nothing. Secrets read from the
+keychain pass through ordinary Dart memory, which can't be wiped, but only
+malware already running as the person could read them there, which is out
+of scope above.
+
 ## Release (step 4)
 
 - Windows: a portable zip that runs without admin rights, then an installer.
@@ -612,6 +644,11 @@ GPad does not protect against:
   Debian 12 and Fedora containers. Both use the system's GTK 3 and EGL.
   Flatpak can come later.
 - GitHub Releases built by CI. No telemetry.
+- Updates: GPad updates itself from GitHub Releases, checking a signature
+  made by CI before it replaces anything (Jason chose this over only telling
+  people a new version is out). The AppImage and the Windows zip replace
+  themselves; a .deb installs with admin rights, so there GPad only says an
+  update is out.
 
 ## Later
 

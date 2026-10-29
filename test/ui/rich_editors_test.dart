@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +33,73 @@ After the rule.
 ''';
 
 void main() {
+  group('links', () {
+    test('only web and mail links open', () {
+      for (final link in [
+        'https://example.com/a?b=c',
+        'http://example.com',
+        ' HTTPS://Example.com ',
+        'mailto:someone@example.com',
+      ]) {
+        expect(linkToOpen(link), isNotNull, reason: link);
+      }
+      for (final link in [
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        'tel:123',
+        'smb://server/share',
+        'ms-settings:',
+        'vscode://file/x',
+        'https:',
+        'https:///path',
+        'mailto:',
+        '//example.com',
+        'example.com',
+        'http://[broken',
+      ]) {
+        expect(linkToOpen(link), isNull, reason: link);
+      }
+    });
+
+    testWidgets('a link that isn\'t opened never reaches the system', (
+      tester,
+    ) async {
+      const channel = MethodChannel('plugins.flutter.io/url_launcher');
+      final opened = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        opened.add((call.method, (call.arguments as Map)['url']));
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      openLink('javascript:alert(1)');
+      openLink('file:///etc/passwd');
+      openLink('https://example.com');
+      await tester.pump();
+      expect(opened, [('launch', 'https://example.com')]);
+    });
+
+    testWidgets('Rich notes open links through that check', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          QuillNoteEditor(
+            markdown: '[x](https://example.com)',
+            onChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 1));
+      final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
+      expect(editor.config.onLaunchUrl, openLink);
+    });
+  });
+
   test('Markdown with an image is detected as Rich', () {
     expect(ModeDetector().detect(_withEmbeds), const ModeGuess.rich());
   });

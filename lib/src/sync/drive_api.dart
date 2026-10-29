@@ -197,12 +197,18 @@ class DriveApi {
     return DriveFile.fromJson(_json(response));
   }
 
-  /// The contents of file [id], or null if there's no such file.
-  Future<Uint8List?> download(String id) async {
+  /// The contents of file [id], or null if there's no such file. Throws
+  /// [FileTooLarge], naming it [name], if it holds more than [maxBytes].
+  Future<Uint8List?> download(
+    String id, {
+    required String name,
+    required int maxBytes,
+  }) async {
     final response = await _send(
       'GET',
       Uri.https(_host, '/drive/v3/files/$id', {'alt': 'media'}),
       allowMissing: true,
+      maxBody: (name: name, bytes: maxBytes),
     );
     return response?.bodyBytes;
   }
@@ -249,12 +255,16 @@ class DriveApi {
   /// Sends a request, retrying while Google asks GPad to slow down or has
   /// trouble, and getting a new access token if the old one was refused.
   /// Returns null for a missing file if [allowMissing].
+  ///
+  /// With [maxBody], stops reading an answer longer than its bytes and
+  /// throws [FileTooLarge] with its name.
   Future<http.Response?> _send(
     String method,
     Uri url, {
     Map<String, String> headers = const {},
     Uint8List? body,
     bool allowMissing = false,
+    ({String name, int bytes})? maxBody,
   }) async {
     var refreshed = false;
     for (var attempt = 1; ; attempt++) {
@@ -272,7 +282,7 @@ class DriveApi {
       try {
         response = await _http
             .send(request)
-            .then(http.Response.fromStream)
+            .then((streamed) => _receive(streamed, maxBody))
             .timeout(const Duration(seconds: 60));
       } on Object catch (e) {
         if (e is! TimeoutException &&
@@ -330,6 +340,27 @@ class DriveApi {
         ),
       };
     }
+  }
+
+  static Future<http.Response> _receive(
+    http.StreamedResponse response,
+    ({String name, int bytes})? max,
+  ) async {
+    if (max == null) return http.Response.fromStream(response);
+    final body = BytesBuilder(copy: false);
+    await for (final chunk in response.stream) {
+      body.add(chunk);
+      if (body.length > max.bytes) throw FileTooLarge(max.name);
+    }
+    return http.Response.bytes(
+      body.takeBytes(),
+      response.statusCode,
+      request: response.request,
+      headers: response.headers,
+      isRedirect: response.isRedirect,
+      persistentConnection: response.persistentConnection,
+      reasonPhrase: response.reasonPhrase,
+    );
   }
 
   Future<void> _wait(int attempt) => Future.delayed(

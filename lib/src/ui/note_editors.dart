@@ -6,6 +6,7 @@ import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:re_editor/re_editor.dart';
 import 'package:re_highlight/languages/all.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../notes/html_markdown.dart';
 import '../notes/note_mode.dart';
@@ -270,6 +271,7 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
               config: const quill.QuillEditorConfig(
                 padding: EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                 unknownEmbedBuilder: _EmbedPlaceholderBuilder(),
+                onLaunchUrl: openLink,
               ),
             ),
           ),
@@ -277,6 +279,32 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
       ),
     );
   }
+}
+
+/// Opens a link Ctrl+clicked in a Rich note, if [linkToOpen] lets it.
+void openLink(String link) {
+  final url = linkToOpen(link);
+  if (url == null) return;
+  unawaited(
+    launchUrl(
+      url,
+      mode: LaunchMode.externalApplication,
+    ).then((_) {}, onError: (Object _) {}),
+  );
+}
+
+/// [link] as an address to open, if it is a web or mail link. Others,
+/// which a pasted page or Markdown can carry, could start whichever program
+/// claims their scheme, with whatever arguments the link holds.
+@visibleForTesting
+Uri? linkToOpen(String link) {
+  final url = Uri.tryParse(link.trim());
+  if (url == null) return null;
+  return switch (url.scheme.toLowerCase()) {
+    'http' || 'https' when url.host.isNotEmpty => url,
+    'mailto' when url.path.isNotEmpty => url,
+    _ => null,
+  };
 }
 
 /// Shows embeds from Markdown (images, rules, tables) without loading

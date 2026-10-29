@@ -23,7 +23,7 @@ that Dropbox, OneDrive, Nextcloud or Syncthing keeps in step.
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
 | 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (all built: sync folder, Google Drive, passphrase changes, tray sync; a real two-computer Google Drive check is next) |
-| 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
+| 4. Release | Security review, GitHub Releases, self-updates, Windows installer, Flatpak | In progress (security review done; CI already builds the Windows zip, .deb and AppImage) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
 
@@ -79,8 +79,12 @@ GPad keeps everything in one SQLite file, `notes.db`:
 - **Windows:** `%LOCALAPPDATA%\GPad\`
 
 Set `GPAD_DATA_DIR` to use another folder, for example to run a portable
-copy from a USB stick. Only one GPad can have the file open at a time; a
-second window tells you GPad is already open instead of risking your edits.
+copy from a USB stick. Only one GPad can have the file open at a time;
+starting GPad again brings the open one to the front instead.
+
+`notes.db` isn't encrypted, so anyone who can use your computer account can
+read it. On Linux GPad makes its folder private to your account; on Windows
+your local app data folder already is.
 
 With sync on, the encrypted copies live in a `GPad` folder in your Google
 Drive, or inside the sync folder you chose. If you let it, GPad keeps the key
@@ -173,6 +177,10 @@ To build the Linux packages yourself:
 flutter build linux --release
 linux/packaging/package.sh   # writes the .deb and AppImage to dist/
 ```
+
+## Security
+
+To report a security problem, see [SECURITY.md](SECURITY.md).
 
 ## License
 
