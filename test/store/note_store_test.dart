@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:goatpad/src/notes/folder.dart';
 import 'package:goatpad/src/notes/note.dart';
 import 'package:goatpad/src/notes/note_mode.dart';
 import 'package:goatpad/src/store/note_store.dart';
@@ -10,8 +11,10 @@ Note _note({
   String id = 'a1',
   String text = 'SELECT 1;',
   NoteStatus status = NoteStatus.open,
+  String? folderId,
 }) => Note(
   id: id,
+  folderId: folderId,
   title: 'Query',
   titleEdited: true,
   text: text,
@@ -36,6 +39,7 @@ void main() {
 
     final loaded = store.loadNotes().single;
     expect(loaded.id, 'a1');
+    expect(loaded.folderId, isNull);
     expect(loaded.title, 'Query');
     expect(loaded.titleEdited, isTrue);
     expect(loaded.text, 'SELECT 1;');
@@ -98,6 +102,43 @@ void main() {
     store.close();
   });
 
+  test('folders load back, nested, with what is in them', () {
+    final store = NoteStore.inMemory();
+    final work = Folder(
+      id: 'f1',
+      name: 'Work',
+      expanded: false,
+      tabsCollapsed: true,
+      createdAt: DateTime(2026, 10, 29, 9),
+      updatedAt: DateTime(2026, 10, 29, 10),
+    );
+    final recipes = Folder(
+      id: 'f2',
+      parentId: 'f1',
+      name: 'Recipes',
+      createdAt: DateTime(2026, 10, 29, 9),
+      updatedAt: DateTime(2026, 10, 29, 9),
+    );
+    store.saveFolders([work, recipes]);
+    store.saveNote(_note(folderId: 'f2'));
+
+    final loaded = {for (final f in store.loadFolders()) f.id: f};
+    expect(loaded['f1']!.name, 'Work');
+    expect(loaded['f1']!.parentId, isNull);
+    expect(loaded['f1']!.expanded, isFalse);
+    expect(loaded['f1']!.tabsCollapsed, isTrue);
+    expect(loaded['f1']!.updatedAt, DateTime(2026, 10, 29, 10));
+    expect(loaded['f2']!.parentId, 'f1');
+    expect(loaded['f2']!.expanded, isTrue);
+    expect(store.loadNotes().single.folderId, 'f2');
+
+    recipes.name = 'Cooking';
+    store.saveFolder(recipes);
+    store.deleteFolders(['f1']);
+    expect(store.loadFolders().single.name, 'Cooking');
+    store.close();
+  });
+
   test('settings are stored and overwritten', () {
     final store = NoteStore.inMemory();
     expect(store.setting('theme'), isNull);
@@ -135,6 +176,40 @@ void main() {
 
     first.close();
     NoteStore.open(path).close();
+  });
+
+  test('notes saved before folders existed open without loss', () {
+    final path = '${temp.path}/notes.db';
+    // The first GPad schema, as step 2 part 1 shipped it.
+    sqlite3.open(path)
+      ..execute('''
+        CREATE TABLE notes (
+          id TEXT PRIMARY KEY, title TEXT NOT NULL,
+          title_edited INTEGER NOT NULL, body TEXT NOT NULL,
+          mode TEXT NOT NULL, language TEXT, status TEXT NOT NULL,
+          tab_order INTEGER NOT NULL, awaiting_paste INTEGER NOT NULL,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          trashed_at INTEGER
+        );
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO notes VALUES ('a1', 'Old note', 0, 'Kept', 'plain', NULL,
+          'open', 0, 0, 0, 0, NULL);
+        INSERT INTO settings VALUES ('welcomed', '1');
+      ''')
+      ..userVersion = 1
+      ..close();
+
+    final store = NoteStore.open(path);
+    final note = store.loadNotes().single;
+    expect(note.text, 'Kept');
+    expect(note.folderId, isNull);
+    expect(store.loadFolders(), isEmpty);
+    expect(store.setting('welcomed'), '1');
+    store.close();
+
+    final db = sqlite3.open(path);
+    expect(db.userVersion, NoteStore.schemaVersion);
+    db.close();
   });
 
   test('notes from a newer GPad are refused rather than changed', () {

@@ -53,7 +53,9 @@ class _GPadAppState extends State<GPadApp> {
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Quit anyway'),
           ),
+          // The default: Enter keeps GPad open, and so does Escape.
           FilledButton(
+            autofocus: true,
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('Keep GPad open'),
           ),

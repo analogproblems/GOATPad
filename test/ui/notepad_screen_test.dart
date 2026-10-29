@@ -151,6 +151,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(await exit, AppExitResponse.cancel);
 
+    // Keeping GPad open is the default: Enter picks it, and Escape backs out.
+    for (final key in [LogicalKeyboardKey.enter, LogicalKeyboardKey.escape]) {
+      final exit = tester.binding.handleRequestAppExit();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.sendKeyEvent(key);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Your latest changes aren\'t saved'), findsNothing);
+      expect(await exit, AppExitResponse.cancel);
+    }
+
     // Once there is room again, Try again saves and the warning goes.
     db.execute('PRAGMA max_page_count = 1000000');
     await tester.tap(find.text('Try again'));

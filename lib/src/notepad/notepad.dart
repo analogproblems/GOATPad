@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
+import '../notes/folder.dart';
 import '../notes/mode_detector.dart';
 import '../notes/name_suggester.dart';
 import '../notes/note.dart';
@@ -12,7 +13,11 @@ import '../store/note_store.dart';
 import '../theme.dart';
 import 'welcome_note.dart';
 
-/// The notes and tabs on this machine, saved as they change.
+/// The notes, folders and tabs on this machine, saved as they change.
+///
+/// Folders double as tab groups: the tab strip shows open notes grouped by
+/// the folder they are in, so moving a note to a folder moves its tab into
+/// that group.
 ///
 /// Typing is saved at most [saveDelay] after the keystroke, and everything
 /// else (new notes, closing, trashing) right away. Nothing ever asks to
@@ -27,6 +32,7 @@ class Notepad extends ChangeNotifier {
     this._store,
     this._clock,
     this._notes,
+    this._folders,
     this._selectedId,
     Appearance appearance,
   ) : appearance = ValueNotifier(appearance) {
@@ -41,6 +47,8 @@ class Notepad extends ChangeNotifier {
   }) {
     final now = clock();
     final notes = store.loadNotes();
+    final folders = store.loadFolders();
+    _repairTree(folders, notes);
 
     final expired = [
       for (final note in notes)
@@ -53,7 +61,7 @@ class Notepad extends ChangeNotifier {
 
     if (store.setting(_welcomedKey) == null) {
       final welcome = Note(
-        id: newNoteId(),
+        id: newId(),
         title: 'Welcome to GPad',
         titleEdited: true,
         text: welcomeNote,
@@ -72,6 +80,7 @@ class Notepad extends ChangeNotifier {
       store,
       clock,
       notes,
+      folders,
       store.setting(_selectedKey),
       _loadAppearance(store.setting(_appearanceKey)),
     );
@@ -88,10 +97,13 @@ class Notepad extends ChangeNotifier {
   final NoteStore _store;
   final DateTime Function() _clock;
   final List<Note> _notes;
+  final List<Folder> _folders;
   final _detector = ModeDetector();
   final _unsaved = <Note>{};
+  final _unsavedFolders = <Folder>{};
   final _unsavedSettings = <String, String>{};
   final _deleted = <String>{};
+  final _deletedFolders = <String>{};
   SqliteException? _saveError;
   Timer? _saveTimer;
   String? _selectedId;
@@ -99,15 +111,73 @@ class Notepad extends ChangeNotifier {
   /// Theme, light or dark, and code colors. Saved whenever they change.
   final ValueNotifier<Appearance> appearance;
 
-  /// Notes in tabs, in tab order.
-  List<Note> get openNotes =>
-      _notes.where((n) => n.status == NoteStatus.open).toList()
-        ..sort((a, b) => a.tabOrder.compareTo(b.tabOrder));
+  /// Open tabs grouped by folder: one group per folder with open notes, in
+  /// sidebar order, then the tabs that aren't in a folder.
+  List<TabGroup> get tabGroups {
+    final open = _notes.where((n) => n.status == NoteStatus.open).toList()
+      ..sort((a, b) => a.tabOrder.compareTo(b.tabOrder));
+    final groups = <TabGroup>[];
+    for (final folder in [..._walk(null), null]) {
+      final notes = [
+        for (final note in open)
+          if (note.folderId == folder?.id) note,
+      ];
+      if (notes.isNotEmpty) groups.add(TabGroup(folder, notes));
+    }
+    return groups;
+  }
+
+  /// Notes in tabs, in the order the tab strip shows them.
+  List<Note> get openNotes => [for (final g in tabGroups) ...g.notes];
+
+  /// The tabs the strip shows: all of them, less those in collapsed groups.
+  /// The selected tab always shows.
+  List<Note> get visibleTabs {
+    final current = selected;
+    return [
+      for (final group in tabGroups)
+        for (final note in group.notes)
+          if (!group.collapsed || note == current) note,
+    ];
+  }
 
   /// Every note that isn't in the trash, open or closed, by title.
   List<Note> get keptNotes =>
       _notes.where((n) => n.status != NoteStatus.trashed).toList()
         ..sort(_byTitle);
+
+  /// Every folder, in sidebar order: each folder followed by the folders
+  /// inside it.
+  List<Folder> get folders => _walk(null);
+
+  /// The folders directly inside [parent], or at the top level, by name.
+  List<Folder> foldersIn(Folder? parent) =>
+      _folders.where((f) => f.parentId == parent?.id).toList()..sort(_byName);
+
+  /// The notes directly inside [folder], or at the top level, by title.
+  /// Leaves out the trash.
+  List<Note> notesIn(Folder? folder) =>
+      _notes
+          .where(
+            (n) => n.status != NoteStatus.trashed && n.folderId == folder?.id,
+          )
+          .toList()
+        ..sort(_byTitle);
+
+  Folder? folderOf(Note note) => _folderById(note.folderId);
+
+  /// The folder [folder] is in, or null at the top level.
+  Folder? parentOf(Folder folder) => _folderById(folder.parentId);
+
+  /// How many folders [folder] is inside: 0 at the top level.
+  int depthOf(Folder folder) => _ancestorsOf(folder).length;
+
+  /// The folder's name with the names of the folders it is in, like
+  /// "Work / Recipes".
+  String pathOf(Folder folder) => [
+    for (final f in _ancestorsOf(folder).reversed) f.displayName,
+    folder.displayName,
+  ].join(' / ');
 
   /// Notes in the trash, most recently trashed first.
   List<Note> get trashedNotes =>
@@ -145,12 +215,17 @@ class Notepad extends ChangeNotifier {
   }
 
   /// A new, empty note that names itself and picks its mode on the first
-  /// paste.
-  Note newNote() {
+  /// paste. It goes in the same folder as the selected tab.
+  Note newNote() => newNoteIn(_currentFolder);
+
+  /// Like [newNote], but in [folder], or at the top level if null.
+  Note newNoteIn(Folder? folder) {
     final now = _clock();
+    if (folder != null) _reveal(folder);
     return _add(
       Note(
-        id: newNoteId(),
+        id: newId(),
+        folderId: folder?.id,
         title: suggestName('', const ModeGuess.plain(), now),
         text: '',
         guess: const ModeGuess.plain(),
@@ -161,15 +236,16 @@ class Notepad extends ChangeNotifier {
     );
   }
 
-  /// A new note holding [text], with its mode and name picked from it.
-  /// Returns null if [text] is blank.
+  /// A new note holding [text], with its mode and name picked from it, in
+  /// the same folder as the selected tab. Returns null if [text] is blank.
   Note? pasteAsNewNote(String text) {
     if (text.trim().isEmpty) return null;
     final now = _clock();
     final guess = _detector.detect(text);
     return _add(
       Note(
-        id: newNoteId(),
+        id: newId(),
+        folderId: _currentFolder?.id,
         title: suggestName(text, guess, now),
         text: text,
         guess: guess,
@@ -192,7 +268,7 @@ class Notepad extends ChangeNotifier {
   /// Selects the next tab, or the previous one with [backwards], wrapping
   /// around at either end.
   void cycleTabs({bool backwards = false}) {
-    final open = openNotes;
+    final open = visibleTabs;
     final current = selected;
     if (open.length < 2 || current == null) return;
     final step = backwards ? -1 : 1;
@@ -283,6 +359,105 @@ class Notepad extends ChangeNotifier {
   /// Deletes every note in the trash for good.
   void emptyTrash() => _remove(trashedNotes);
 
+  /// Moves [note], and its tab, into [folder], or to the top level if null.
+  void moveNote(Note note, Folder? folder) {
+    if (note.folderId == folder?.id) return;
+    note.folderId = folder?.id;
+    // Last in its new group.
+    note.tabOrder = _nextTabOrder(_notes);
+    _saveNow(note);
+    if (folder != null) _reveal(folder);
+    notifyListeners();
+  }
+
+  /// A new folder inside [parent], or at the top level if null.
+  Folder createFolder({Folder? parent, String name = 'New folder'}) {
+    final now = _clock();
+    final folder = Folder(
+      id: newId(),
+      parentId: parent?.id,
+      name: name,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _folders.add(folder);
+    if (parent != null) _reveal(parent);
+    _saveFolderNow(folder);
+    notifyListeners();
+    return folder;
+  }
+
+  /// Renames [folder]. A blank [name] leaves it as it was.
+  void renameFolder(Folder folder, String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed == folder.name) return;
+    folder
+      ..name = trimmed
+      ..updatedAt = _clock();
+    _saveFolderNow(folder);
+    notifyListeners();
+  }
+
+  /// Whether [folder] can go into [parent]: not into itself or a folder
+  /// inside it, and not where it already is.
+  bool canMoveFolder(Folder folder, Folder? parent) {
+    if (folder.parentId == parent?.id) return false;
+    if (parent == null) return true;
+    return parent != folder && !_ancestorsOf(parent).contains(folder);
+  }
+
+  /// Moves [folder], with everything in it, into [parent], or to the top
+  /// level if null.
+  void moveFolder(Folder folder, Folder? parent) {
+    if (!canMoveFolder(folder, parent)) return;
+    folder
+      ..parentId = parent?.id
+      ..updatedAt = _clock();
+    if (parent != null) _reveal(parent);
+    _saveFolderNow(folder);
+    notifyListeners();
+  }
+
+  /// Removes [folder] but keeps what was in it: its notes, trashed ones too,
+  /// and its folders move up to the folder it was in.
+  void deleteFolder(Folder folder) {
+    for (final note in _notes) {
+      if (note.folderId != folder.id) continue;
+      note.folderId = folder.parentId;
+      _unsaved.add(note);
+    }
+    for (final child in _folders) {
+      if (child.parentId != folder.id) continue;
+      child.parentId = folder.parentId;
+      _unsavedFolders.add(child);
+    }
+    _folders.remove(folder);
+    _unsavedFolders.remove(folder);
+    _deletedFolders.add(folder.id);
+    // One transaction, so the folder is never gone with its notes still
+    // pointing at it.
+    flush();
+    notifyListeners();
+  }
+
+  /// Shows or hides what is inside [folder] in the sidebar.
+  void setFolderExpanded(Folder folder, bool expanded) {
+    if (folder.expanded == expanded) return;
+    folder.expanded = expanded;
+    _unsavedFolders.add(folder);
+    _scheduleSave();
+    notifyListeners();
+  }
+
+  /// Folds [folder]'s tabs into its label in the tab strip, or unfolds them.
+  void setTabsCollapsed(Folder folder, bool collapsed) {
+    if (folder.tabsCollapsed == collapsed) return;
+    folder.tabsCollapsed = collapsed;
+    _unsavedFolders.add(folder);
+    _scheduleSave();
+    notifyListeners();
+  }
+
   /// Saves any changes that are still waiting, like typing within the last
   /// [saveDelay]. Returns false if that failed: the changes are kept, and
   /// saved by a later [flush] or the retry after [retryDelay].
@@ -290,13 +465,17 @@ class Notepad extends ChangeNotifier {
     _saveTimer?.cancel();
     _saveTimer = null;
     if (_unsaved.isNotEmpty ||
+        _unsavedFolders.isNotEmpty ||
         _unsavedSettings.isNotEmpty ||
-        _deleted.isNotEmpty) {
+        _deleted.isNotEmpty ||
+        _deletedFolders.isNotEmpty) {
       try {
         _store.save(
           notes: _unsaved,
+          folders: _unsavedFolders,
           settings: _unsavedSettings,
           deletedNoteIds: _deleted,
+          deletedFolderIds: _deletedFolders,
         );
       } on SqliteException catch (error) {
         _saveError = error;
@@ -305,8 +484,10 @@ class Notepad extends ChangeNotifier {
         return false;
       }
       _unsaved.clear();
+      _unsavedFolders.clear();
       _unsavedSettings.clear();
       _deleted.clear();
+      _deletedFolders.clear();
     }
     if (_saveError != null) {
       _saveError = null;
@@ -344,13 +525,57 @@ class Notepad extends ChangeNotifier {
   }
 
   /// The tab to show if [note]'s tab goes away: the one after it, else the
-  /// one before.
+  /// one before, preferring tabs that aren't folded away.
   Note? _neighborOf(Note note) {
-    final open = openNotes;
-    final index = open.indexOf(note);
-    if (index < 0) return selected;
-    open.removeAt(index);
-    return open.isEmpty ? null : open[index.clamp(0, open.length - 1)];
+    for (final tabs in [visibleTabs, openNotes]) {
+      final index = tabs.indexOf(note);
+      if (index < 0) continue;
+      tabs.removeAt(index);
+      if (tabs.isNotEmpty) return tabs[index.clamp(0, tabs.length - 1)];
+    }
+    return note == selected ? null : selected;
+  }
+
+  Folder? get _currentFolder {
+    final note = selected;
+    return note == null ? null : folderOf(note);
+  }
+
+  Folder? _folderById(String? id) {
+    if (id == null) return null;
+    for (final folder in _folders) {
+      if (folder.id == id) return folder;
+    }
+    return null;
+  }
+
+  /// The folders [folder] is in, innermost first.
+  List<Folder> _ancestorsOf(Folder folder) {
+    final ancestors = <Folder>[];
+    for (
+      var parent = _folderById(folder.parentId);
+      parent != null;
+      parent = _folderById(parent.parentId)
+    ) {
+      ancestors.add(parent);
+    }
+    return ancestors;
+  }
+
+  /// [parent]'s folders, each followed by the folders inside it.
+  List<Folder> _walk(Folder? parent) => [
+    for (final folder in foldersIn(parent)) ...[folder, ..._walk(folder)],
+  ];
+
+  /// Expands [folder] and the folders it is in, so the sidebar shows what is
+  /// inside it.
+  void _reveal(Folder folder) {
+    for (final f in [folder, ..._ancestorsOf(folder)]) {
+      if (f.expanded) continue;
+      f.expanded = true;
+      _unsavedFolders.add(f);
+      _scheduleSave();
+    }
   }
 
   void _select(Note? note) {
@@ -376,6 +601,11 @@ class Notepad extends ChangeNotifier {
     flush();
   }
 
+  void _saveFolderNow(Folder folder) {
+    _unsavedFolders.add(folder);
+    flush();
+  }
+
   void _saveAppearance() {
     _unsavedSettings[_appearanceKey] = jsonEncode(appearance.value.toJson());
     flush();
@@ -396,6 +626,33 @@ class Notepad extends ChangeNotifier {
     return last + 1;
   }
 
+  /// Puts folders whose parent is missing, or that are inside themselves,
+  /// at the top level, and does the same for notes in missing folders. Only
+  /// a bug or a damaged file could cause either, but the sidebar would
+  /// otherwise lose them or never stop drawing.
+  static void _repairTree(List<Folder> folders, List<Note> notes) {
+    final byId = {for (final f in folders) f.id: f};
+    for (final folder in folders) {
+      final seen = {folder.id};
+      for (var id = folder.parentId; id != null; id = byId[id]?.parentId) {
+        if (!byId.containsKey(id) || !seen.add(id)) {
+          folder.parentId = null;
+          break;
+        }
+      }
+    }
+    for (final note in notes) {
+      if (!byId.containsKey(note.folderId)) note.folderId = null;
+    }
+  }
+
+  static int _byName(Folder a, Folder b) {
+    final byName = a.displayName.toLowerCase().compareTo(
+      b.displayName.toLowerCase(),
+    );
+    return byName != 0 ? byName : a.createdAt.compareTo(b.createdAt);
+  }
+
   static int _byTitle(Note a, Note b) {
     final byTitle = a.title.toLowerCase().compareTo(b.title.toLowerCase());
     return byTitle != 0 ? byTitle : a.createdAt.compareTo(b.createdAt);
@@ -411,4 +668,18 @@ class Notepad extends ChangeNotifier {
     }
     return const Appearance();
   }
+}
+
+/// Open tabs that share a folder, or that aren't in one.
+class TabGroup {
+  const TabGroup(this.folder, this.notes);
+
+  /// Null for the tabs that aren't in a folder.
+  final Folder? folder;
+
+  /// In tab order.
+  final List<Note> notes;
+
+  /// Whether the strip folds these tabs into the folder's label.
+  bool get collapsed => folder?.tabsCollapsed ?? false;
 }
