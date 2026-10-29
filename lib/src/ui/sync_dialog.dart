@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../sync/folder_backend.dart';
+import '../sync/google_auth.dart';
 import '../sync/sync_backend.dart';
 import '../sync/sync_controller.dart';
 
@@ -17,22 +18,24 @@ Future<void> showSyncDialog(BuildContext context, SyncController sync) =>
     );
 
 /// A line for the sidebar saying how sync is going.
-({IconData icon, String label}) syncSummary(SyncController sync) =>
-    switch (sync.status) {
-      SyncStatus.off => (icon: Icons.cloud_off_outlined, label: 'Sync is off'),
-      SyncStatus.locked => (
-        icon: Icons.lock_outline,
-        label: 'Sync paused: unlock',
-      ),
-      SyncStatus.syncing => (icon: Icons.sync, label: 'Syncing…'),
-      SyncStatus.synced => (
-        icon: Icons.cloud_done_outlined,
-        label: sync.unreadable.isEmpty ? 'Synced' : 'Synced, with problems',
-      ),
-      SyncStatus.problem => (icon: Icons.sync_problem, label: 'Sync problem'),
-    };
+({IconData icon, String label}) syncSummary(
+  SyncController sync,
+) => switch (sync.status) {
+  SyncStatus.off => (icon: Icons.cloud_off_outlined, label: 'Sync is off'),
+  SyncStatus.locked => (icon: Icons.lock_outline, label: 'Sync paused: unlock'),
+  SyncStatus.syncing => (icon: Icons.sync, label: 'Syncing…'),
+  SyncStatus.synced => (
+    icon: Icons.cloud_done_outlined,
+    label: sync.unreadable.isEmpty ? 'Synced' : 'Synced, with problems',
+  ),
+  SyncStatus.problem => (icon: Icons.sync_problem, label: 'Sync problem'),
+  SyncStatus.signedOut => (icon: Icons.login, label: 'Sync paused: sign in'),
+};
 
-enum _Page { choose, create, join, recovery, unlock, status }
+enum _Page { choose, create, join, recovery, unlock, signIn, status }
+
+/// Where someone chose to sync through.
+enum _Where { drive, folder }
 
 class _SyncDialog extends StatefulWidget {
   const _SyncDialog(this.sync);
@@ -49,21 +52,37 @@ class _SyncDialogState extends State<_SyncDialog> {
   late _Page _page = switch (sync.status) {
     SyncStatus.off => _Page.choose,
     SyncStatus.locked => _Page.unlock,
+    SyncStatus.signedOut => _Page.signIn,
     _ => _Page.status,
   };
+
+  late _Where _where = sync.googleClient == null ? _Where.folder : _Where.drive;
 
   final _folder = TextEditingController();
   final _passphrase = TextEditingController();
   final _again = TextEditingController();
   final _recoveryKey = TextEditingController();
+  final _clientId = TextEditingController();
+  final _clientSecret = TextEditingController();
   final _passphraseFocus = FocusNode();
   final _recoveryKeyFocus = FocusNode();
   late final _deviceName = TextEditingController(
     text: sync.config?.deviceName ?? sync.defaultDeviceName,
   );
 
-  FolderCheck? _checked;
+  PlaceCheck? _checked;
   String? _newRecoveryKey;
+
+  /// Whether the person uses their own Google sign-in client.
+  late bool _ownClient = sync.googleClient == null;
+
+  /// The sign-in link while GPad waits for the browser, and how to stop
+  /// waiting.
+  Uri? _signInUrl;
+  Completer<void>? _cancelSignIn;
+
+  /// Whether GPad is saving a sign-in, which can't be cancelled.
+  bool _savingSignIn = false;
   bool _useRecoveryKey = false;
   bool _remember = true;
   bool? _keychain;
@@ -90,7 +109,16 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   @override
   void dispose() {
-    for (final c in [_folder, _passphrase, _again, _recoveryKey, _deviceName]) {
+    _stopSigningIn();
+    for (final c in [
+      _folder,
+      _passphrase,
+      _again,
+      _recoveryKey,
+      _clientId,
+      _clientSecret,
+      _deviceName,
+    ]) {
       c.dispose();
     }
     _passphraseFocus.dispose();
@@ -98,17 +126,23 @@ class _SyncDialogState extends State<_SyncDialog> {
     super.dispose();
   }
 
-  void _go(_Page page) => setState(() {
-    _page = page;
-    _error = null;
-    _passphrase.clear();
-    _again.clear();
-    _recoveryKey.clear();
-    _useRecoveryKey = false;
-  });
+  void _go(_Page page) {
+    if (!mounted) return;
+    setState(() {
+      _page = page;
+      _error = null;
+      _passphrase.clear();
+      _again.clear();
+      _recoveryKey.clear();
+      _useRecoveryKey = false;
+    });
+  }
 
   /// Runs [action], showing that GPad is busy, and shows what went wrong.
+  /// Does nothing while GPad is busy already, as when someone presses
+  /// Enter twice.
   Future<void> _work(Future<void> Function() action) async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -118,9 +152,7 @@ class _SyncDialogState extends State<_SyncDialog> {
     } on SyncBackendException catch (e) {
       _error = e.message;
     } on FormatException catch (e) {
-      _error =
-          'That folder\'s ${FolderBackend.vaultFileName} can\'t be read: '
-          '${e.message}';
+      _error = 'The vault file there can\'t be read: ${e.message}';
     } on FileSystemException catch (e) {
       _error = e.osError?.message ?? e.message;
     } finally {
@@ -136,7 +168,78 @@ class _SyncDialogState extends State<_SyncDialog> {
     if (path != null) setState(() => _folder.text = path);
   }
 
-  Future<void> _next() => _work(() async {
+  /// Signs in to Google in the browser, showing the link meanwhile, and
+  /// returns what [signIn] did, or null if it was cancelled. Once [signIn]
+  /// says it is saving the sign-in, it can't be cancelled any more, and
+  /// Cancel goes.
+  Future<T?> _signingIn<T>(
+    Future<T> Function(
+      void Function(Uri url) showUrl,
+      Future<void> cancel,
+      void Function() saving,
+    )
+    signIn,
+  ) async {
+    final cancel = _cancelSignIn = Completer<void>();
+    try {
+      return await signIn(
+        (url) {
+          if (mounted) setState(() => _signInUrl = url);
+        },
+        cancel.future,
+        () {
+          _cancelSignIn = null;
+          _signInUrl = null;
+          _savingSignIn = true;
+          if (mounted) setState(() {});
+        },
+      );
+    } on GoogleAuthException {
+      if (cancel.isCompleted) return null;
+      rethrow;
+    } finally {
+      _cancelSignIn = null;
+      _savingSignIn = false;
+      if (mounted) setState(() => _signInUrl = null);
+    }
+  }
+
+  void _stopSigningIn() {
+    final cancel = _cancelSignIn;
+    if (cancel != null && !cancel.isCompleted) cancel.complete();
+  }
+
+  Future<void> _next() => _where == _Where.drive ? _signInToDrive() : _check();
+
+  Future<void> _signInToDrive() => _work(() async {
+    GoogleClient? own;
+    if (_ownClient) {
+      final id = _clientId.text.trim();
+      final secret = _clientSecret.text.trim();
+      if (id.isEmpty || secret.isEmpty) {
+        _error = 'Enter your Google client\'s ID and secret.';
+        return;
+      }
+      own = GoogleClient(id: id, secret: secret);
+    }
+    final checked = await _signingIn(
+      (showUrl, cancel, _) =>
+          sync.signInToDrive(ownClient: own, showUrl: showUrl, cancel: cancel),
+    );
+    if (checked == null || !mounted) return;
+    _checked = checked;
+    _go(checked.vault == null ? _Page.create : _Page.join);
+  });
+
+  Future<void> _signInAgain() => _work(() async {
+    final done = await _signingIn((showUrl, cancel, saving) async {
+      await sync.signInAgain(showUrl: showUrl, cancel: cancel, saving: saving);
+      return true;
+    });
+    if (done == true && mounted) Navigator.of(context).pop();
+  });
+
+  Future<void> _check() => _work(() async {
     final chosen = _folder.text.trim();
     if (chosen.isEmpty) {
       _error = 'Choose a folder first.';
@@ -158,7 +261,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       return;
     }
     final key = await sync.create(
-      folder: _checked!.path,
+      place: _checked!.place,
       passphrase: passphrase,
       deviceName: _deviceName.text,
       remember: _remember,
@@ -169,7 +272,7 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   Future<void> _join() => _work(() async {
     final ok = await sync.join(
-      folder: _checked!.path,
+      place: _checked!.place,
       vault: _checked!.vault!,
       passphrase: _useRecoveryKey ? null : _passphrase.text,
       recoveryKey: _useRecoveryKey ? _recoveryKey.text : null,
@@ -201,14 +304,17 @@ class _SyncDialogState extends State<_SyncDialog> {
       : 'That passphrase doesn\'t unlock these notes.';
 
   Future<void> _turnOff() async {
+    final drive = sync.config?.place is DrivePlace;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Turn off sync on this computer?'),
-        content: const Text(
-          'Your notes stay here, and in the sync folder for your other '
+        content: Text(
+          'Your notes stay here, and in '
+          '${drive ? 'Google Drive' : 'the sync folder'} for your other '
           'computers. Changes here stop going to them, and theirs stop '
-          'coming here. GPad forgets the passphrase.',
+          'coming here. GPad forgets the passphrase'
+          '${drive ? ' and signs out of Google here' : ''}.',
         ),
         actions: [
           TextButton(
@@ -255,6 +361,7 @@ class _SyncDialogState extends State<_SyncDialog> {
           _Page.join => 'Unlock your notes',
           _Page.recovery => 'Save your recovery key',
           _Page.unlock => 'Unlock sync',
+          _Page.signIn => 'Sign in to Google',
           _Page.status => 'Sync',
         }),
         content: SizedBox(
@@ -293,16 +400,24 @@ class _SyncDialogState extends State<_SyncDialog> {
     _Page.join => _joinBody(context),
     _Page.recovery => _recoveryBody(context),
     _Page.unlock => _unlockBody(context),
+    _Page.signIn => _signInBody(context),
     _Page.status => _statusBody(context),
   };
 
   List<Widget> _actions(BuildContext context) {
     void close() => Navigator.of(context).pop();
     final busy = _busy;
+    final signingIn = _cancelSignIn != null;
     return switch (_page) {
       _Page.choose => [
-        TextButton(onPressed: busy ? null : close, child: const Text('Cancel')),
-        FilledButton(onPressed: busy ? null : _next, child: const Text('Next')),
+        TextButton(
+          onPressed: signingIn ? _stopSigningIn : (busy ? null : close),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : _next,
+          child: Text(_where == _Where.drive ? 'Sign in with Google' : 'Next'),
+        ),
       ],
       _Page.create => [
         TextButton(
@@ -337,6 +452,16 @@ class _SyncDialogState extends State<_SyncDialog> {
           child: const Text('Unlock'),
         ),
       ],
+      _Page.signIn => [
+        TextButton(
+          onPressed: signingIn ? _stopSigningIn : (busy ? null : close),
+          child: Text(signingIn ? 'Cancel' : 'Later'),
+        ),
+        FilledButton(
+          onPressed: busy ? null : _signInAgain,
+          child: const Text('Sign in with Google'),
+        ),
+      ],
       _Page.status => [
         TextButton(onPressed: _turnOff, child: const Text('Turn off sync…')),
         TextButton(
@@ -354,6 +479,119 @@ class _SyncDialogState extends State<_SyncDialog> {
       'here, with a passphrase only you know, before they go anywhere.',
     ),
     const SizedBox(height: 16),
+    SegmentedButton<_Where>(
+      segments: const [
+        ButtonSegment(
+          value: _Where.drive,
+          icon: Icon(Icons.add_to_drive),
+          label: Text('Google Drive'),
+        ),
+        ButtonSegment(
+          value: _Where.folder,
+          icon: Icon(Icons.folder_outlined),
+          label: Text('A sync folder'),
+        ),
+      ],
+      selected: {_where},
+      onSelectionChanged: _busy
+          ? null
+          : (selected) => setState(() {
+              _where = selected.single;
+              _error = null;
+            }),
+    ),
+    const SizedBox(height: 16),
+    if (_where == _Where.drive)
+      ..._driveChoice(context)
+    else
+      ..._folderChoice(context),
+  ];
+
+  List<Widget> _driveChoice(BuildContext context) => [
+    _hint(
+      context,
+      'GPad keeps its encrypted files in a GPad folder in your Google Drive, '
+      'and can see only the files it makes there. Signing in opens your '
+      'browser. On your other computers, sign in with the same Google '
+      'account.',
+    ),
+    if (_ownClient) ...[
+      const SizedBox(height: 12),
+      if (sync.googleClient == null)
+        const Text(
+          'This copy of GPad has no Google sign-in built in, so it needs '
+          'your own Google client.',
+        ),
+      TextField(
+        controller: _clientId,
+        enabled: !_busy,
+        decoration: const InputDecoration(labelText: 'Client ID'),
+      ),
+      TextField(
+        controller: _clientSecret,
+        enabled: !_busy,
+        decoration: const InputDecoration(labelText: 'Client secret'),
+        onSubmitted: (_) => _next(),
+      ),
+      const SizedBox(height: 8),
+      _hint(
+        context,
+        'Make a "Desktop app" OAuth client in Google Cloud, allowed into the '
+        'Drive API with the drive.file scope; GPad\'s README says how. Use '
+        'the same client on every computer: Google shows each client only '
+        'the files it made.',
+      ),
+    ],
+    if (sync.googleClient != null)
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton(
+          onPressed: _busy
+              ? null
+              : () => setState(() => _ownClient = !_ownClient),
+          child: Text(
+            _ownClient
+                ? 'Use GPad\'s Google sign-in'
+                : 'Use your own Google client…',
+          ),
+        ),
+      ),
+    ..._waitingForBrowser(context),
+  ];
+
+  /// While GPad waits for the browser: what to do there, and the link, in
+  /// case the browser didn't open. Then, while GPad saves the sign-in, that
+  /// it does.
+  List<Widget> _waitingForBrowser(BuildContext context) {
+    if (_savingSignIn) {
+      return const [
+        SizedBox(height: 12),
+        Text(
+          'Saving the sign-in in this computer\'s keychain, which may ask you '
+          'to unlock it.',
+        ),
+      ];
+    }
+    final url = _signInUrl;
+    if (url == null) return const [];
+    return [
+      const SizedBox(height: 12),
+      const Text(
+        'Finish signing in in your browser. If it didn\'t open, copy the '
+        'link into it.',
+      ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          icon: const Icon(Icons.copy, size: 16),
+          label: const Text('Copy sign-in link'),
+          onPressed: () => Clipboard.setData(ClipboardData(text: '$url')),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _folderChoice(BuildContext context) => [
     Row(
       children: [
         Expanded(
@@ -377,12 +615,23 @@ class _SyncDialogState extends State<_SyncDialog> {
       'Any folder that a tool like Dropbox, OneDrive, Nextcloud or Syncthing '
       'keeps in step between computers, or a network drive. GPad keeps its '
       'files in a GPad folder inside it. On your other computers, choose the '
-      'same folder. Google Drive is coming in a later update.',
+      'same folder.',
     ),
   ];
 
+  /// Where the notes go, in a sentence's words.
+  static String _whereWords(SyncPlace place) => switch (place) {
+    FolderPlace(:final path) => path,
+    DrivePlace(:final account) => 'the Google Drive of $account',
+  };
+
   List<Widget> _createBody(BuildContext context) => [
-    Text('GPad keeps your notes in ${_checked!.path}.'),
+    Text(switch (_checked!.place) {
+      FolderPlace(:final path) => 'GPad keeps your notes in $path.',
+      DrivePlace(:final account) =>
+        'GPad keeps your notes in a GPad folder in the Google Drive of '
+            '$account.',
+    }),
     const SizedBox(height: 8),
     const Text(
       'Your passphrase encrypts them. You type it once on each computer you '
@@ -405,8 +654,8 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   List<Widget> _joinBody(BuildContext context) => [
     Text(
-      '${_checked!.path} already has notes from another computer. Type the '
-      'passphrase you chose there.',
+      '${_capitalized(_whereWords(_checked!.place))} already has notes from '
+      'another computer. Type the passphrase you chose there.',
     ),
     const SizedBox(height: 12),
     ..._keyFields(onSubmitted: _join),
@@ -422,13 +671,29 @@ class _SyncDialogState extends State<_SyncDialog> {
 
   List<Widget> _unlockBody(BuildContext context) => [
     Text(
-      'Sync with ${sync.config?.folder} is paused until you type your '
-      'passphrase.',
+      'Sync with ${sync.config?.place.description} is paused until you '
+      'type your passphrase.',
     ),
     const SizedBox(height: 12),
     ..._keyFields(onSubmitted: _unlock),
     _rememberBox(context),
   ];
+
+  List<Widget> _signInBody(BuildContext context) => [
+    Text(
+      'Sync with ${sync.config?.place.description} is paused until GPad '
+      'signs in to Google again on this computer. Changes made meanwhile '
+      'wait here, and go up once it does.',
+    ),
+    if (sync.problem case final problem?) ...[
+      const SizedBox(height: 8),
+      _hint(context, problem),
+    ],
+    ..._waitingForBrowser(context),
+  ];
+
+  static String _capitalized(String text) =>
+      text.isEmpty ? text : '${text[0].toUpperCase()}${text.substring(1)}';
 
   List<Widget> _recoveryBody(BuildContext context) {
     final theme = Theme.of(context);
@@ -506,7 +771,10 @@ class _SyncDialogState extends State<_SyncDialog> {
       ),
       const SizedBox(height: 16),
       if (config != null) ...[
-        _fact(context, 'Sync folder', config.folder),
+        switch (config.place) {
+          FolderPlace(:final path) => _fact(context, 'Sync folder', path),
+          DrivePlace(:final account) => _fact(context, 'Google Drive', account),
+        },
         _fact(context, 'This computer', config.deviceName),
         _fact(
           context,
@@ -520,13 +788,12 @@ class _SyncDialogState extends State<_SyncDialog> {
         const SizedBox(height: 8),
         Text(
           '${sync.unreadable.length == 1 ? 'One file' : '${sync.unreadable.length} files'} '
-          'in the sync folder couldn\'t be opened, so GPad left '
+          'GPad syncs with couldn\'t be opened, so GPad left '
           '${sync.unreadable.length == 1 ? 'it' : 'them'} alone. A file '
           'changed by something other than GPad, damaged, or saved by a '
           'newer GPad reads this way. Changes here to the '
           '${sync.unreadable.length == 1 ? 'note in it wait until it' : 'notes in them wait until they'} '
-          'can be read: update GPad, or delete a damaged file from the sync '
-          'folder.',
+          'can be read: update GPad, or delete a damaged file.',
           style: TextStyle(color: theme.colorScheme.error),
         ),
       ],

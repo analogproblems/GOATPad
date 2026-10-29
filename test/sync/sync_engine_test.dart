@@ -382,6 +382,39 @@ void main() {
     expect(recordFiles().where((f) => f.contains(' ')), isEmpty);
   });
 
+  test('a copy newer than the note\'s own file goes into it first', () async {
+    work.write('Doc', 'v1');
+    await work.sync();
+    await home.sync();
+    final id = work.note('Doc').id;
+    final own = File(p.join(folder, 'records', '$id.gpad'));
+    final before = own.readAsBytesSync();
+
+    // Home's edit ends up only in a copy, and the note's own file is put
+    // back as it was.
+    home.notepad.editText(home.note('Doc'), 'v2');
+    await home.sync();
+    final homeFile = own.readAsBytesSync();
+    own.writeAsBytesSync(before);
+    File(p.join(folder, 'records', "$id (Home laptop's conflicted copy).gpad"))
+        .writeAsBytesSync(homeFile);
+
+    // Work, which changed nothing, takes the edit and removes the copy.
+    await work.sync();
+    expect(work.note('Doc').text, 'v2');
+    expect(recordFiles(), ['$id.gpad']);
+
+    // So the edit has to be in the note's own file: a computer joining now
+    // gets it, though home hasn't synced since.
+    final laptop = Machine(
+      'Laptop',
+      crypto.fromKey(made.header, made.vault.exportKey())!,
+      folder,
+    );
+    await laptop.sync();
+    expect(laptop.note('Doc').text, 'v2');
+  });
+
   test('a file overwritten by another machine is not lost', () async {
     work.write('Shared', 'base');
     await work.sync();

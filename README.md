@@ -15,14 +15,14 @@ waiting in a tab on your Linux machine at home.
 Early. The local notepad is done: notes are saved as you type, your tabs
 come back when you reopen GPad, folders double as tab groups, Ctrl+P
 searches everything, and pasting from a web page or Word keeps the
-formatting. Encrypted sync works through any folder that Dropbox, OneDrive,
-Nextcloud or Syncthing keeps in step; Google Drive is next.
+formatting. Encrypted sync works through Google Drive, or through any folder
+that Dropbox, OneDrive, Nextcloud or Syncthing keeps in step.
 
 | Step | What it delivers | State |
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
-| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder done) |
+| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder and Google Drive done; passphrase changes and tray sync next) |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
@@ -40,8 +40,8 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 - **Folders are tab groups.** Open notes are grouped in the tab strip by the
   folder they are in, and a click folds a group away.
 - **Private sync.** Notes are encrypted on your device, with a passphrase
-  only you know, before they reach your sync folder (and, soon, Google
-  Drive). There is no GPad server. Edits on two computers at once are
+  only you know, before they reach Google Drive or your sync folder. There
+  is no GPad server. Edits on two computers at once are
   merged, and when both changed the same text you get both versions.
 - **Your look.** Warm, Classic or Slate themes, each in light and dark, and
   code colors you can switch to a colorblind-safe or high-contrast scheme.
@@ -62,11 +62,14 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
    it; switch the note to Plain to see the Markdown underneath.
 7. Open **Appearance** (the palette button) to try the themes and code
    colors. GPad remembers your choice.
-8. Click **Sync is off** at the bottom of the sidebar and choose a folder
-   that Dropbox, OneDrive, Nextcloud or Syncthing syncs. Pick a passphrase
-   and save the recovery key. On your other computer, choose the same
-   folder and type the same passphrase: your notes from both appear on
-   both, and edits show up on the other one a few seconds later.
+8. Click **Sync is off** at the bottom of the sidebar. Choose **Google
+   Drive** and sign in in your browser, or choose **A sync folder** and pick
+   a folder that Dropbox, OneDrive, Nextcloud or Syncthing syncs. Pick a
+   passphrase and save the recovery key. On your other computer, sign in to
+   the same Google account (or choose the same folder) and type the same
+   passphrase: your notes from both appear on both. Edits show up on the
+   other computer within a minute through Drive, or a few seconds through a
+   folder.
 
 ## Where your notes are
 
@@ -79,11 +82,39 @@ Set `GPAD_DATA_DIR` to use another folder, for example to run a portable
 copy from a USB stick. Only one GPad can have the file open at a time; a
 second window tells you GPad is already open instead of risking your edits.
 
-With sync on, the encrypted copies live in a `GPad` folder inside the sync
-folder you chose. If you let it, GPad keeps the key that unlocks them (not
-your passphrase) in the system keychain (GNOME Keyring or KWallet on Linux,
-Credential Manager on Windows); otherwise it asks for the passphrase each
-time it starts.
+With sync on, the encrypted copies live in a `GPad` folder in your Google
+Drive, or inside the sync folder you chose. If you let it, GPad keeps the key
+that unlocks them (not your passphrase) in the system keychain (GNOME Keyring
+or KWallet on Linux, Credential Manager on Windows); otherwise it asks for the
+passphrase each time it starts. GPad's Google sign-in goes in the keychain
+too; without one, GPad asks you to sign in again after each start.
+
+GPad asks Google only for the `drive.file` permission, which lets it see the
+files it makes and nothing else in your Drive.
+
+### Your own Google client
+
+Release builds sign in to Google with GPad's own client. A build without it
+(one you built yourself, say) asks for yours, and anyone can use their own:
+
+1. In [Google Cloud](https://console.cloud.google.com/projectcreate), create
+   a project and
+   [turn on the Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com).
+2. In [Google Auth Platform](https://console.cloud.google.com/auth/overview),
+   click **Get started**: choose **External**, add the
+   `https://www.googleapis.com/auth/drive.file` scope under **Data Access**,
+   and under **Audience** click **Publish app**. (While an app is in testing,
+   Google signs its users out after 7 days.)
+3. Under **Clients**, create a **Desktop app** client and copy its ID and
+   secret.
+4. In GPad, open sync, choose **Google Drive**, click **Use your own Google
+   client…** and enter them.
+
+Use the same client on every computer: Google shows each client only the
+files it made, so a computer with another client won't find your notes. To
+build GPad with your client inside, pass
+`--dart-define=GPAD_GOOGLE_CLIENT_ID=… --dart-define=GPAD_GOOGLE_CLIENT_SECRET=…`
+to `flutter build` or `flutter run`.
 
 ## Download a test build
 

@@ -63,7 +63,18 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - run: flutter build linux --release
+      # GPad's Google sign-in client, for syncing through Drive. Google
+      # treats a desktop app's client secret as public, so it ships in the
+      # app; it lives in secrets only to stay out of the repo. Builds
+      # without it (forks, say) ask for the person's own client instead.
+      - name: Build
+        env:
+          GPAD_GOOGLE_CLIENT_ID: ${{ secrets.GPAD_GOOGLE_CLIENT_ID }}
+          GPAD_GOOGLE_CLIENT_SECRET: ${{ secrets.GPAD_GOOGLE_CLIENT_SECRET }}
+        run: >
+          flutter build linux --release
+          --dart-define=GPAD_GOOGLE_CLIENT_ID="$GPAD_GOOGLE_CLIENT_ID"
+          --dart-define=GPAD_GOOGLE_CLIENT_SECRET="$GPAD_GOOGLE_CLIENT_SECRET"
       - name: Package .deb and AppImage
         run: linux/packaging/package.sh dist
       - uses: actions/upload-artifact@v4
@@ -121,7 +132,15 @@ jobs:
       # Sync's files, folder watching and Credential Manager behave
       # differently on Windows, so its tests run here too.
       - run: flutter test test/sync
-      - run: flutter build windows --release
+      - name: Build
+        env:
+          GPAD_GOOGLE_CLIENT_ID: ${{ secrets.GPAD_GOOGLE_CLIENT_ID }}
+          GPAD_GOOGLE_CLIENT_SECRET: ${{ secrets.GPAD_GOOGLE_CLIENT_SECRET }}
+        shell: pwsh
+        run: >
+          flutter build windows --release
+          "--dart-define=GPAD_GOOGLE_CLIENT_ID=$env:GPAD_GOOGLE_CLIENT_ID"
+          "--dart-define=GPAD_GOOGLE_CLIENT_SECRET=$env:GPAD_GOOGLE_CLIENT_SECRET"
       # Flutter apps need the Visual C++ runtime, which many PCs (and locked-down
       # work machines) don't have. Shipping it next to gpad.exe keeps the
       # build portable: unzip and run, no installer or admin rights.
