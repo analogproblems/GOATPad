@@ -32,6 +32,13 @@ draft, delete the tag (`git push --delete origin v0.2.0` and
 `git tag -d v0.2.0`), then tag and push again. Once a release is public,
 fix mistakes with a new version instead.
 
+## A dry run
+
+To try the whole release without making one, run CI by hand on a branch:
+**Actions → CI → Run workflow**. It builds and tests everything as for a
+release, then puts the release together as the `release-dry-run`
+artifact, with the version from `pubspec.yaml`, instead of drafting it.
+
 ## What a release holds
 
 | File | For |
