@@ -278,8 +278,9 @@ The choices are saved with the other settings.
 - **Schema.** `notes` (random 128-bit id, folder, title, body, mode,
   language, status open/closed/trashed, tab order, timestamps), `folders`
   (random id, parent, name, whether it is expanded in the sidebar and folded
-  in the tab strip) and `settings` (theme, selected tab). The version lives
-  in `PRAGMA user_version` (3 since search); older databases are upgraded
+  in the tab strip), `settings` (theme, selected tab, sync settings) and
+  `sync_records` (what sync has uploaded; see Sync). The version lives
+  in `PRAGMA user_version` (4 since sync); older databases are upgraded
   in place and a database from a newer GPad is refused rather than changed.
   Random ids mean notes and folders made on two machines never clash once
   sync arrives. A note or folder whose folder is missing loads at the top
@@ -300,45 +301,138 @@ The choices are saved with the other settings.
 
 ## Sync (step 3)
 
-Sync goes through a small `SyncBackend` interface with two backends in v1:
+Sync goes through a small `SyncBackend` interface (list, read, write and
+delete files, plus an optional change stream), so the engine above it
+doesn't care where the files live. Step 3 ships it in three parts:
 
-- **Google Drive, direct.** Linux has no official Drive desktop app, so
-  GPad talks to the Drive API itself. It asks only for the `drive.file`
-  scope, which lets it see files it created and nothing else. Full Drive
-  access is a restricted scope that needs a paid Google security assessment
-  for public apps. Advanced users can supply their own Google OAuth client ID.
-- **Sync folder.** The same encrypted files written to any local folder, for
-  people who already sync with Dropbox, OneDrive, Nextcloud or Syncthing.
+1. **Sync folder (built).** Encrypted files in any folder that a tool like
+   Dropbox, OneDrive, Nextcloud or Syncthing keeps in step, or on a network
+   drive. GPad writes into a `GPad` folder inside the one you choose (or
+   straight into it if it already holds a vault or is called `GPad`).
+2. **Google Drive, direct.** Linux has no official Drive desktop app, so
+   GPad will talk to the Drive API itself. It asks only for the `drive.file`
+   scope, which lets it see files it created and nothing else. Full Drive
+   access is a restricted scope that needs a paid Google security assessment
+   for public apps. Release builds will get GPad's OAuth client ID from CI
+   secrets, and anyone will be able to use their own.
+3. **Later in step 3:** changing the passphrase, making a new recovery key,
+   and syncing from the tray while the window is closed.
 
-Layout in the remote store:
+### What syncs
 
-- One encrypted file per note, named by a random ID, so titles never leak
-  through file names and two machines editing different notes never clash.
-- One small encrypted index holding folders, tab state and per-note versions.
+Notes (title, text, mode, language, open, closed or trashed, tab order,
+folder, timestamps) and folders (name, parent, timestamps). Which tab is
+selected, whether a folder is expanded, the theme and the window stay on
+each computer. So does the welcome note until you edit it, so each machine
+doesn't collect a copy of everyone's.
 
-Timing: upload a few seconds after typing stops, not on close, so shutting
-down the work machine cannot strand a paste. An optional tray mode keeps
-syncing in the background.
+### Files
 
-Conflicts: when two machines changed the same note since their last sync,
-keep both, and name the second "Note (conflict from <machine>)". Never pick a
-winner silently.
+```
+GPad/
+  gpad-vault.json        public header: vault id, Argon2id salt and
+                         settings, and the wrapped note key
+  records/<id>.gpad      one encrypted file per note or folder
+```
+
+- **One file per note or folder,** named by its random id, so titles never
+  leak through file names and two machines editing different notes never
+  touch the same file. Writes go to a temporary file that is then renamed,
+  so a sync tool never uploads half a file. The vault file is put in
+  place by a move that refuses to replace a file already there (a hard
+  link on Linux, `MoveFileEx` without replacing on Windows), so of two
+  computers setting up one shared folder at once, only one can win,
+  however long either takes. A drive that can't do that, like a FAT USB
+  stick, can't be set up, rather than risk a half-written vault file;
+  a GPad folder set up elsewhere and copied there can be joined.
+- **A record** is JSON inside the encryption: kind, id, a version vector,
+  the device that saved it and its name, when, and the data (or nothing,
+  for a delete, which is kept so other machines learn about it).
+- **Version vectors** (a count per device) tell GPad whether the copy in
+  the folder is the same as what it last saw, older, newer, or changed on
+  two machines at once. Clocks are only used to break ties between fields.
+
+### How a round works
+
+Each round lists the folder, skips files whose size and modification time
+are unchanged since last time, and opens the rest:
+
+- **Newer, and nothing changed here:** taken as it is.
+- **Newer, and changed here too, or changed on two machines at once:** a
+  three-way merge against the last version both sides had. Fields are
+  merged one by one: a field changed on one side takes that side, and a
+  field changed on both takes the newer change. When both machines changed
+  the text, the text here stays and the other machine's text becomes a new
+  note, "Title (conflict from Home PC)". GPad never picks a winner for text
+  silently. An edit beats a delete, so a note edited on one machine while
+  it was deleted forever on another comes back.
+- **Older than what this machine has, or missing:** uploaded again, so a
+  rolled-back or deleted file is put right by any machine that knows better.
+- **Copies made by the sync tool** (Dropbox's "conflicted copy", Syncthing's
+  `.sync-conflict-`) are merged in like any other version, then deleted:
+  first renamed to a copy name of GPad's own, then deleted only if it is
+  still the version that was read. A copy that changed, or one GPad
+  stopped before deleting, is read again next round.
+- **A file that can't be opened** (damaged, changed by something else, or
+  saved by a newer GPad) is left alone and reported in the sync dialog. It
+  is tried again only once it changes. Changes here to that note wait
+  rather than replace a version this GPad can't read.
+
+Then everything changed here goes up. A table in `notes.db`
+(`sync_records`), kept current by triggers, counts each note's and folder's
+changes, so a change made while a round is uploading is never mistaken for
+uploaded, and changes waiting when GPad quits are still waiting when it
+starts. Notes merged in a round are saved in the same transaction as what
+sync then knows about them; if that fails, the merge is undone in the
+window too, and the next round merges again. A file's tag (its size and
+modification time) is taken before it is renamed into place, so a file
+another computer writes there a moment later is still read.
+
+A note whose folder hasn't arrived yet shows at the top level and moves into
+the folder once it does. A folder loop (two machines moving folders into each
+other at once) is broken at the same folder on every machine.
+
+### Timing
+
+Changes go up 3 seconds after typing stops, or after 20 seconds of
+non-stop typing. GPad also syncs when the sync folder changes, every minute,
+when the window comes back into focus, and once more before it quits (giving
+up after 5 seconds, since the changes are kept for next time). Turning
+sync off, or setting it up again, stops a round under way once the file it
+is reading or writing is done, before it uses the key or records anything.
+
+Before each round, GPad checks that `gpad-vault.json` is still there and is
+the same vault. If the folder is missing (a USB drive that isn't plugged in,
+a sync tool that hasn't started), sync shows a problem and writes nothing,
+rather than starting a new vault or reading the empty folder as "everything
+was deleted".
 
 ## Encryption (step 3)
 
-- Everything is encrypted on the device before upload. The storage provider
-  only ever holds ciphertext.
-- Passphrase to key: Argon2id. Encryption: XChaCha20-Poly1305. Both from
-  libsodium (for example through
-  [sodium_libs](https://pub.dev/packages/sodium_libs)); no homemade crypto.
-- A random data key encrypts notes; the passphrase-derived key wraps the data
-  key. Changing the passphrase rewraps one key instead of re-encrypting
-  every note.
-- A printable recovery key, shown once at setup, also wraps the data key. Lose
-  both the passphrase and the recovery key and the notes are unrecoverable.
-  That is the point.
-- Keys and OAuth tokens live in the OS keychain (Windows Credential Manager or
-  DPAPI, Linux Secret Service), never in plain files.
+- Everything is encrypted on the device before it is written to the sync
+  folder. The folder, and whoever stores it, only ever holds ciphertext.
+- [libsodium](https://doc.libsodium.org/) 1.0.22, through the
+  [sodium](https://pub.dev/packages/sodium) package, which builds it from
+  its signed source release with the app; no homemade crypto.
+- **A random 256-bit note key** encrypts every record with
+  XChaCha20-Poly1305. Each file has a fresh random nonce, and the vault id
+  and record id are bound in as associated data, so a file can't be passed
+  off as another note or moved between vaults. Contents are padded (Padmé,
+  at least 256 bytes), so file sizes only hint at how long a note is.
+- **The passphrase** (at least 10 characters) goes through Argon2id
+  (libsodium's "moderate": 3 passes over 256 MiB, run off the UI thread)
+  to a key that wraps the note key. Changing the passphrase rewraps one key
+  instead of re-encrypting every note.
+- **A recovery key,** 160 random bits shown once at setup as 32 characters
+  (Crockford base32, so 0/O and 1/I/L can't be mixed up), also wraps the note
+  key. GPad offers to copy it or save it to a file, and the setup dialog
+  stays open until you tick that it is saved. Lose both the passphrase and the recovery key
+  and the notes are unrecoverable. That is the point.
+- **Remembering the passphrase** keeps the note key (not the passphrase) in
+  the system keychain: Secret Service (GNOME Keyring, KWallet) on Linux,
+  Credential Manager on Windows, through their own C APIs. Without a
+  keychain, or if you untick "Remember", GPad asks for the passphrase each
+  time it starts and keeps your notes local until you type it.
 
 ## Threat model
 
@@ -353,6 +447,12 @@ GPad does not protect against:
 
 - Malware or another user with access to an unlocked machine running GPad.
 - Someone who knows the passphrase or holds the recovery key.
+- Someone with the synced files learning how many notes and folders there
+  are, roughly how long they are, and when they change.
+- Someone with write access to the synced files deleting them or putting
+  back older copies. Machines that have seen newer versions put them right,
+  but a computer joining for the first time could see the older copy until
+  one of them syncs.
 - An employer's policy on putting work content in personal cloud storage.
   Check before relying on sync from a work machine.
 

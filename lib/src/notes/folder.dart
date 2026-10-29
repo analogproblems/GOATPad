@@ -23,7 +23,7 @@ class Folder {
   /// Whether the tab strip folds this folder's tabs into its label.
   bool tabsCollapsed;
 
-  final DateTime createdAt;
+  DateTime createdAt;
   DateTime updatedAt;
 
   /// [name], or "Untitled folder" if it has been cleared.

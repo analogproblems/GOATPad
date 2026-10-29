@@ -5,6 +5,7 @@ import '../notepad/notepad.dart';
 import '../notes/mode_detector.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
+import '../sync/sync_controller.dart';
 import 'clipboard_html.dart';
 import 'note_editors.dart';
 import 'search_palette.dart';
@@ -14,9 +15,10 @@ import 'tab_strip.dart';
 /// The main window: folders and notes in the sidebar, tabs, the editor and a
 /// status bar.
 class NotepadScreen extends StatelessWidget {
-  const NotepadScreen({super.key, required this.notepad});
+  const NotepadScreen({super.key, required this.notepad, this.sync});
 
   final Notepad notepad;
+  final SyncController? sync;
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +69,10 @@ class NotepadScreen extends StatelessWidget {
             child: Scaffold(
               body: Row(
                 children: [
-                  SizedBox(width: 240, child: Sidebar(notepad: notepad)),
+                  SizedBox(
+                    width: 240,
+                    child: Sidebar(notepad: notepad, sync: sync),
+                  ),
                   const VerticalDivider(width: 1),
                   Expanded(
                     child: Column(
@@ -168,7 +173,10 @@ class NotepadScreen extends StatelessWidget {
     final rich = note.guess.mode == NoteMode.rich;
     // Plain and Code share one editor, so the cursor stays put when the first
     // paste turns a Plain note into Code, or the language changes.
-    final key = ValueKey('${note.id}-${rich ? 'rich' : 'text'}');
+    // A new key when sync brings other text, so the editor shows it.
+    final key = ValueKey(
+      '${note.id}-${note.textVersion}-${rich ? 'rich' : 'text'}',
+    );
     void onChanged(String text) => notepad.editText(note, text);
 
     if (!rich) {

@@ -81,7 +81,7 @@ class NoteStore {
   @visibleForTesting
   Database get database => _db;
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   void _migrate() {
     final version = _db.userVersion;
@@ -160,8 +160,86 @@ class NoteStore {
           INSERT INTO notes_fts (notes_fts) VALUES ('rebuild');
         ''');
       }
+      if (version < 4) {
+        // What sync knows about each note and folder. Triggers add one to
+        // local_seq whenever a note or folder changes in a way other
+        // machines see (not, say, a folder being expanded in the sidebar),
+        // so sync can tell what to upload even if GPad quit before it got
+        // the chance: whatever has local_seq above synced_seq.
+        _db.execute('''
+          CREATE TABLE sync_records (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            local_seq INTEGER NOT NULL DEFAULT 0,
+            synced_seq INTEGER NOT NULL DEFAULT 0,
+            changed_at INTEGER NOT NULL DEFAULT 0,
+            version TEXT,
+            base TEXT,
+            common_version TEXT,
+            common TEXT,
+            remote_tag TEXT
+          );
+          INSERT INTO sync_records (id, kind, local_seq, changed_at)
+            SELECT id, 'note', 1, updated_at FROM notes;
+          INSERT INTO sync_records (id, kind, local_seq, changed_at)
+            SELECT id, 'folder', 1, updated_at FROM folders;
+          ${_changeTrigger('notes', 'note', 'INSERT', _syncedNoteColumns)}
+          ${_changeTrigger('notes', 'note', 'UPDATE', _syncedNoteColumns)}
+          ${_changeTrigger('notes', 'note', 'DELETE', _syncedNoteColumns)}
+          ${_changeTrigger('folders', 'folder', 'INSERT', _syncedFolderColumns)}
+          ${_changeTrigger('folders', 'folder', 'UPDATE', _syncedFolderColumns)}
+          ${_changeTrigger('folders', 'folder', 'DELETE', _syncedFolderColumns)}
+        ''');
+      }
       _db.userVersion = schemaVersion;
     });
+  }
+
+  static const _syncedNoteColumns = [
+    'title',
+    'title_edited',
+    'body',
+    'mode',
+    'language',
+    'status',
+    'tab_order',
+    'awaiting_paste',
+    'created_at',
+    'updated_at',
+    'trashed_at',
+    'folder_id',
+  ];
+
+  // Whether a folder is expanded in the sidebar, or its tabs folded, stays
+  // on each machine.
+  static const _syncedFolderColumns = [
+    'parent_id',
+    'name',
+    'created_at',
+    'updated_at',
+  ];
+
+  /// A trigger that counts a change to a row of [table] in sync_records.
+  static String _changeTrigger(
+    String table,
+    String kind,
+    String event,
+    List<String> columns,
+  ) {
+    final row = event == 'DELETE' ? 'old' : 'new';
+    final when = event == 'UPDATE'
+        ? 'WHEN ${[for (final c in columns) 'old.$c IS NOT new.$c'].join(' OR ')}'
+        : '';
+    return '''
+      CREATE TRIGGER ${table}_sync_${event.toLowerCase()} AFTER $event ON $table
+      $when BEGIN
+        INSERT INTO sync_records (id, kind, local_seq, changed_at)
+        VALUES ($row.id, '$kind', 1, CAST(unixepoch('subsec') * 1000 AS INTEGER))
+        ON CONFLICT (id) DO UPDATE SET
+          local_seq = local_seq + 1,
+          changed_at = excluded.changed_at;
+      END;
+    ''';
   }
 
   static const _upsertNote = '''
@@ -376,10 +454,101 @@ class NoteStore {
     ];
   }
 
+  /// What sync knows about every note and folder it has seen, by id.
+  Map<String, SyncState> syncStates() => {
+    for (final row in _db.select('SELECT * FROM sync_records'))
+      row['id'] as String: SyncState._(row),
+  };
+
+  SyncState? syncState(String id) {
+    final rows = _db.select('SELECT * FROM sync_records WHERE id = ?', [id]);
+    return rows.isEmpty ? null : SyncState._(rows.first);
+  }
+
+  /// Notes and folders changed since sync last caught up with them, or that
+  /// sync has asked to upload again.
+  List<SyncState> pendingSync() => [
+    for (final row in _db.select(
+      'SELECT * FROM sync_records WHERE local_seq > synced_seq',
+    ))
+      SyncState._(row),
+  ];
+
+  /// Records what sync knows about record [id]. Null arguments leave a
+  /// value as it was. [upload] makes sync upload the record again, even if
+  /// nothing has changed here; otherwise it counts as caught up as of
+  /// [syncedSeq], or as it is now.
+  void saveSyncState(
+    String id, {
+    required String kind,
+    int? syncedSeq,
+    bool upload = false,
+    String? version,
+    String? base,
+    String? commonVersion,
+    String? common,
+    String? remoteTag,
+    bool clearBase = false,
+    bool clearRemoteTag = false,
+  }) {
+    _db.execute(
+      'INSERT INTO sync_records (id, kind) VALUES (?, ?) '
+      'ON CONFLICT (id) DO NOTHING',
+      [id, kind],
+    );
+    _db.execute(
+      '''
+      UPDATE sync_records SET
+        synced_seq = CASE WHEN ?1 THEN -1 ELSE coalesce(?2, local_seq) END,
+        version = coalesce(?3, version),
+        base = CASE WHEN ?8 THEN NULL ELSE coalesce(?4, base) END,
+        common_version = coalesce(?5, common_version),
+        common = coalesce(?6, common),
+        remote_tag = CASE WHEN ?9 THEN NULL ELSE coalesce(?7, remote_tag) END
+      WHERE id = ?10
+      ''',
+      [
+        upload ? 1 : 0,
+        syncedSeq,
+        version,
+        base,
+        commonVersion,
+        common,
+        remoteTag,
+        clearBase ? 1 : 0,
+        clearRemoteTag ? 1 : 0,
+        id,
+      ],
+    );
+  }
+
+  void deleteSyncState(String id) =>
+      _db.execute('DELETE FROM sync_records WHERE id = ?', [id]);
+
+  /// Forgets everything sync knew, for a different vault: every note and
+  /// folder counts as never uploaded, and deleted ones are forgotten.
+  void resetSync() => _transaction(() {
+    _db.execute('''
+      DELETE FROM sync_records
+      WHERE id NOT IN (SELECT id FROM notes UNION SELECT id FROM folders)
+    ''');
+    _db.execute('''
+      UPDATE sync_records SET synced_seq = 0, local_seq = max(local_seq, 1),
+        version = NULL, base = NULL, common_version = NULL, common = NULL,
+        remote_tag = NULL
+    ''');
+  });
+
+  /// Runs [body] in one transaction.
+  void transaction(void Function() body) => _transaction(body);
+
   String? setting(String key) {
     final rows = _db.select('SELECT value FROM settings WHERE key = ?', [key]);
     return rows.isEmpty ? null : rows.first['value'] as String;
   }
+
+  void deleteSetting(String key) =>
+      _db.execute('DELETE FROM settings WHERE key = ?', [key]);
 
   void setSetting(String key, String value) => _db.execute(
     'INSERT INTO settings (key, value) VALUES (?, ?) '
@@ -476,6 +645,52 @@ class NoteStore {
         NoteMode.plain => const ModeGuess.plain(),
         NoteMode.code => ModeGuess.code(language ?? 'plaintext'),
       };
+}
+
+/// What sync knows about one note or folder.
+class SyncState {
+  SyncState._(Row row)
+    : id = row['id'] as String,
+      kind = row['kind'] as String,
+      localSeq = row['local_seq'] as int,
+      syncedSeq = row['synced_seq'] as int,
+      changedAt = DateTime.fromMillisecondsSinceEpoch(row['changed_at'] as int),
+      version = row['version'] as String?,
+      base = row['base'] as String?,
+      commonVersion = row['common_version'] as String?,
+      common = row['common'] as String?,
+      remoteTag = row['remote_tag'] as String?;
+
+  final String id;
+
+  /// `note` or `folder`.
+  final String kind;
+
+  /// Goes up by one with each change made on this machine.
+  final int localSeq;
+
+  /// [localSeq] when sync last caught up with this record, or -1 when it
+  /// should upload it again.
+  final int syncedSeq;
+
+  /// When [localSeq] last went up.
+  final DateTime changedAt;
+
+  /// The version (JSON) that sync last uploaded or took from another
+  /// machine, and the record's data (JSON) at that version: null for a
+  /// record never synced, and [base] null for a deleted one.
+  final String? version;
+  final String? base;
+
+  /// The latest version (JSON) that came from another machine, and its
+  /// data (JSON), for merging changes made on two machines at once.
+  final String? commonVersion;
+  final String? common;
+
+  /// The remote file's tag when sync last read or wrote it.
+  final String? remoteTag;
+
+  bool get changedHere => localSeq > syncedSeq;
 }
 
 /// A note that matches a search. Matching text in [title] and [snippet] sits
