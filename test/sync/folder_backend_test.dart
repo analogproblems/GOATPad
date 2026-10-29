@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goatpad/src/sync/folder_backend.dart';
+import 'package:goatpad/src/sync/move_no_replace.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -14,52 +16,69 @@ void main() {
 
   tearDown(() => dir.delete(recursive: true));
 
-  test('of two computers making a vault at once, one wins', () async {
-    for (var round = 0; round < 20; round++) {
-      final folder = p.join(dir.path, 'GPad$round');
-      final first = Uint8List.fromList('{"first": $round}'.codeUnits);
-      final second = Uint8List.fromList('{"second": $round}'.codeUnits);
-      final made = await Future.wait([
-        FolderBackend(folder).createVault(first),
-        FolderBackend(folder).createVault(second),
-      ]);
-      expect(made.where((m) => m), hasLength(1), reason: 'round $round');
-      expect(
-        await FolderBackend(folder).readVault(),
-        made.first ? first : second,
-      );
-      // Nothing left over from the one that lost, or the setup lock.
-      expect(Directory(folder).listSync().map((e) => p.basename(e.path)), {
-        'gpad-vault.json',
-        'records',
-      });
-    }
-  });
+  for (final noReplaceMoves in [true, false]) {
+    final how = noReplaceMoves ? 'moved into place' : 'filled in place';
 
-  test('a setup stopped halfway doesn\'t block the folder for good', () async {
-    final folder = p.join(dir.path, 'GPad');
-    await Directory(folder).create();
-    final lock = File(p.join(folder, '.gpad-setup.lock'))..createSync();
-    final vault = Uint8List.fromList('{"vault": 1}'.codeUnits);
+    FolderBackend backend(String folder) =>
+        FolderBackend(folder)..noReplaceMoves = noReplaceMoves;
 
-    // Another computer is setting up right now.
-    expect(await FolderBackend(folder).createVault(vault), isFalse);
-    expect(await FolderBackend(folder).readVault(), isNull);
+    test('of two computers making a vault at once, one wins ($how)', () async {
+      for (var round = 0; round < 20; round++) {
+        final folder = p.join(dir.path, 'GPad$round');
+        final first = Uint8List.fromList('{"first": $round}'.codeUnits);
+        final second = Uint8List.fromList('{"second": $round}'.codeUnits);
+        final made = await Future.wait([
+          backend(folder).createVault(first),
+          backend(folder).createVault(second),
+        ]);
+        expect(made.where((m) => m), hasLength(1), reason: 'round $round');
+        expect(await backend(folder).readVault(), made.first ? first : second);
+        // Nothing left over from the one that lost.
+        expect(Directory(folder).listSync().map((e) => p.basename(e.path)), {
+          'gpad-vault.json',
+          'records',
+        });
+      }
+    });
 
-    // Or it stopped, long enough ago.
-    lock.setLastModifiedSync(DateTime.now().subtract(const Duration(hours: 1)));
-    expect(await FolderBackend(folder).createVault(vault), isTrue);
-    expect(await FolderBackend(folder).readVault(), vault);
-    expect(lock.existsSync(), isFalse);
+    test(
+      'a setup that stalls can\'t replace a vault made meanwhile ($how)',
+      () async {
+        final folder = p.join(dir.path, 'GPad');
+        final stalled = backend(folder);
+        final held = Completer<void>();
+        final resume = Completer<void>();
+        stalled.beforePublish = () {
+          held.complete();
+          return resume.future;
+        };
+        final first = Uint8List.fromList('{"stalled": 1}'.codeUnits);
+        final second = Uint8List.fromList('{"meanwhile": 2}'.codeUnits);
+        final stalledMade = stalled.createVault(first);
+        await held.future;
+        expect(await backend(folder).createVault(second), isTrue);
+        resume.complete();
+        expect(await stalledMade, isFalse);
+        expect(await backend(folder).readVault(), second);
+        expect(Directory(folder).listSync().map((e) => p.basename(e.path)), {
+          'gpad-vault.json',
+          'records',
+        });
+      },
+    );
+  }
 
-    // Stopped after its vault was in place: that vault stays.
-    lock
-      ..createSync()
-      ..setLastModifiedSync(DateTime.now().subtract(const Duration(hours: 1)));
-    final other = Uint8List.fromList('{"vault": 2}'.codeUnits);
-    expect(await FolderBackend(folder).createVault(other), isFalse);
-    expect(await FolderBackend(folder).readVault(), vault);
-  });
+  test('a move that refuses to replace', () {
+    final a = File(p.join(dir.path, 'a'))..writeAsStringSync('a');
+    final b = p.join(dir.path, 'b');
+    expect(moveNoReplace(a.path, b), isTrue);
+    expect(a.existsSync(), isFalse);
+    expect(File(b).readAsStringSync(), 'a');
+    final c = File(p.join(dir.path, 'c'))..writeAsStringSync('c');
+    expect(moveNoReplace(c.path, b), isFalse);
+    expect(c.readAsStringSync(), 'c');
+    expect(File(b).readAsStringSync(), 'a');
+  }, skip: Platform.isLinux || Platform.isWindows ? false : 'not built here');
 
   test('a write\'s tag is for the bytes it wrote', () async {
     final folder = p.join(dir.path, 'GPad');

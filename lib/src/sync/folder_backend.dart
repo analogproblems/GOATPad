@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 
+import 'move_no_replace.dart';
 import 'sync_backend.dart';
 
 /// Keeps synced notes in a folder that another tool, like Dropbox,
@@ -42,6 +43,16 @@ class FolderBackend implements SyncBackend {
   @visibleForTesting
   Future<void> Function()? afterClaim;
 
+  /// Runs just before a new vault file is put in place, for tests that
+  /// hold one computer's setup there.
+  @visibleForTesting
+  Future<void> Function()? beforePublish;
+
+  /// Whether to put a new vault in place with [moveNoReplace]; tests turn
+  /// it off to check the way used where that isn't possible.
+  @visibleForTesting
+  bool noReplaceMoves = true;
+
   Directory get _records => Directory(p.join(path, 'records'));
   File get _vault => File(p.join(path, vaultFileName));
 
@@ -66,92 +77,41 @@ class FolderBackend implements SyncBackend {
     final temp = _tempFor(_vault);
     try {
       await temp.writeAsBytes(bytes, flush: true);
-      // Only the computer holding the setup lock publishes, so two setting
-      // up one folder at once can't both win. The header goes in whole, by
-      // a rename onto a name nothing is at, so it is never seen half
-      // written and never replaces another.
-      if (!await _lockSetup()) return false;
+      await beforePublish?.call();
+      // In one step that never replaces a vault already there, however
+      // long since the check above: of two computers setting up one
+      // folder, only one wins, and nobody reads half a header.
       try {
-        if (await _vault.exists()) return false;
-        await temp.rename(_vault.path);
-        return true;
-      } finally {
-        await _unlockSetup();
+        if (noReplaceMoves) return moveNoReplace(temp.path, _vault.path);
+      } on UnsupportedError {
+        // No hard links here, like on a FAT USB stick.
       }
+      return await _createAndFill(_vault, bytes);
     } finally {
       try {
         await temp.delete();
       } on FileSystemException {
-        // Renamed into place, or never written.
+        // Moved into place, or never written.
       }
     }
   });
 
-  /// Held while a computer sets this folder up. Left behind if GPad
-  /// stopped mid-setup, which is why an old one can be taken over.
-  File get _setupLock => File(p.join(path, '.gpad-setup.lock'));
-
-  /// How old a setup lock must be before it counts as left behind. Setting
-  /// up holds it for moments; the margin is for clocks that disagree
-  /// between computers and a file server.
-  static const staleLock = Duration(minutes: 10);
-
-  Future<bool> _lockSetup() async {
-    for (var attempt = 0; attempt < 3; attempt++) {
-      try {
-        await _setupLock.create(exclusive: true);
-        return true;
-      } on FileSystemException {
-        // Someone holds it, or held it and stopped.
-      }
-      final FileStat lock;
-      try {
-        lock = await _setupLock.stat();
-      } on FileSystemException {
-        continue;
-      }
-      if (lock.type == FileSystemEntityType.notFound) continue; // Let go of.
-      if (DateTime.now().difference(lock.modified) < staleLock) return false;
-      // Left behind. Renaming it away is something only one computer can
-      // do; whoever does tries for the lock again.
-      final taken = _tempFor(_setupLock);
-      try {
-        await _setupLock.rename(taken.path);
-      } on FileSystemException {
-        continue;
-      }
-      if (DateTime.now().difference((await taken.stat()).modified) <
-          staleLock) {
-        // A new lock took the old one's place just now; give it back.
-        try {
-          await taken.rename(_setupLock.path);
-        } on FileSystemException {
-          // Its owner finishes all the same.
-        }
-        return false;
-      }
-      try {
-        await taken.delete();
-      } on FileSystemException {
-        // A stray hidden file at worst.
-      }
+  /// Where a file can't be moved into place without replacing: creates
+  /// [file] exclusively, which also never replaces, and fills it.
+  Future<bool> _createAndFill(File file, Uint8List bytes) async {
+    try {
+      await file.create(exclusive: true);
+    } on FileSystemException {
+      if (await file.exists()) return false;
+      rethrow;
     }
-    return false;
-  }
-
-  Future<void> _unlockSetup() async {
-    // Windows can refuse while another computer looks at the lock, so try
-    // a few times; one left behind goes stale.
-    for (var attempt = 0; attempt < 5; attempt++) {
-      try {
-        await _setupLock.delete();
-        return;
-      } on PathNotFoundException {
-        return;
-      } on FileSystemException {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
+    try {
+      await file.writeAsBytes(bytes, flush: true);
+    } catch (_) {
+      await file.delete();
+      rethrow;
     }
+    return true;
   }
 
   @override

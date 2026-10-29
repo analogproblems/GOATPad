@@ -338,10 +338,12 @@ GPad/
 - **One file per note or folder,** named by its random id, so titles never
   leak through file names and two machines editing different notes never
   touch the same file. Writes go to a temporary file that is then renamed,
-  so a sync tool never uploads half a file. Setting a folder up takes a
-  lock file first (an exclusive create), so of two computers setting up
-  one shared folder at once, only one can win; a lock left behind by a
-  GPad that stopped mid-setup can be taken over after 10 minutes.
+  so a sync tool never uploads half a file. The vault file is put in
+  place by a move that refuses to replace a file already there (a hard
+  link on Linux, `MoveFileEx` without replacing on Windows; where neither
+  works, like a FAT USB stick, an exclusive create), so of two computers
+  setting up one shared folder at once, only one can win, however long
+  either takes.
 - **A record** is JSON inside the encryption: kind, id, a version vector,
   the device that saved it and its name, when, and the data (or nothing,
   for a delete, which is kept so other machines learn about it).
