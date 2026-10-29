@@ -12,14 +12,14 @@ waiting in a tab on your Linux machine at home.
 
 ## Status
 
-Early. Step 2, the local notepad, is under way: notes are saved as you type
-and your tabs come back when you reopen GPad. Folders, search and sync are
-still to come.
+Early. Step 2, the local notepad, is under way: notes are saved as you type,
+your tabs come back when you reopen GPad, and folders double as tab groups.
+Search and sync are still to come.
 
 | Step | What it delivers | State |
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
-| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | In progress: saving, restore, trash and settings are in; folders and search next |
+| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | In progress: saving, restore, trash, settings and folders are in; search next |
 | 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
@@ -32,6 +32,8 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
   changeable with one click.
 - **Nothing lost.** No save prompts. Closing a tab keeps the note, marked
   closed, so tabs stay tidy without throwing anything away.
+- **Folders are tab groups.** Open notes are grouped in the tab strip by the
+  folder they are in, and a click folds a group away.
 - **Private sync.** Notes are encrypted on your device before they reach
   Google Drive or your sync folder. There is no GPad server.
 - **Your look.** Warm, Classic or Slate themes, each in light and dark, and
@@ -45,7 +47,9 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
    typed, are still there.
 3. Close a tab with Ctrl+W and reopen it from the sidebar. Right-click a note
    to move it to the trash, where it stays for 30 days.
-4. Open **Appearance** (the palette button) to try the themes and code
+4. Make a folder with the button next to NOTES and drag a note onto it. Its
+   tab joins the folder's group; click the group's label to fold it away.
+5. Open **Appearance** (the palette button) to try the themes and code
    colors. GPad remembers your choice.
 
 ## Where your notes are

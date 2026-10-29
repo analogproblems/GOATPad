@@ -15,6 +15,7 @@ class Note {
     required this.guess,
     required this.createdAt,
     required this.updatedAt,
+    this.folderId,
     this.titleEdited = false,
     this.status = NoteStatus.open,
     this.tabOrder = 0,
@@ -27,6 +28,9 @@ class Note {
 
   /// [title], or "Untitled" if it has been cleared.
   String get displayTitle => title.trim().isEmpty ? 'Untitled' : title;
+
+  /// The folder the note is in, or null at the top level.
+  String? folderId;
 
   /// The person typed this title, so GPad stops suggesting names.
   bool titleEdited;
@@ -52,9 +56,9 @@ class Note {
 
 final _random = Random.secure();
 
-/// A random 128-bit id in hex. Random rather than counted, so notes made on
-/// two machines never clash once sync arrives.
-String newNoteId() => [
+/// A random 128-bit id in hex, for notes and folders. Random rather than
+/// counted, so ids made on two machines never clash once sync arrives.
+String newId() => [
   for (var i = 0; i < 16; i++)
     _random.nextInt(256).toRadixString(16).padLeft(2, '0'),
 ].join();

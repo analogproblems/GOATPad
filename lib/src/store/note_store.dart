@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import '../notes/folder.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
 
@@ -14,7 +15,7 @@ class StoreLockedException implements Exception {
   String toString() => 'StoreLockedException: $path is open in another GPad';
 }
 
-/// Notes and settings in a local SQLite database.
+/// Notes, folders and settings in a local SQLite database.
 ///
 /// Calls are synchronous: SQLite answers small reads and writes in well under
 /// a millisecond, and the notepad batches keystrokes before saving.
@@ -22,6 +23,7 @@ class NoteStore {
   NoteStore._(this._db) {
     _migrate();
     _saveNote = _db.prepare(_upsertNote, persistent: true);
+    _saveFolder = _db.prepare(_upsertFolder, persistent: true);
   }
 
   /// Opens or creates the database at [path].
@@ -61,12 +63,13 @@ class NoteStore {
 
   final Database _db;
   late final PreparedStatement _saveNote;
+  late final PreparedStatement _saveFolder;
 
   /// The connection, for tests that check its settings or make it fail.
   @visibleForTesting
   Database get database => _db;
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   void _migrate() {
     final version = _db.userVersion;
@@ -101,14 +104,28 @@ class NoteStore {
           );
         ''');
       }
+      if (version < 2) {
+        _db.execute('''
+          CREATE TABLE folders (
+            id TEXT PRIMARY KEY,
+            parent_id TEXT,
+            name TEXT NOT NULL,
+            expanded INTEGER NOT NULL,
+            tabs_collapsed INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          ALTER TABLE notes ADD COLUMN folder_id TEXT;
+        ''');
+      }
       _db.userVersion = schemaVersion;
     });
   }
 
   static const _upsertNote = '''
     INSERT INTO notes (id, title, title_edited, body, mode, language, status,
-      tab_order, awaiting_paste, created_at, updated_at, trashed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tab_order, awaiting_paste, created_at, updated_at, trashed_at, folder_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       title = excluded.title,
       title_edited = excluded.title_edited,
@@ -119,7 +136,20 @@ class NoteStore {
       tab_order = excluded.tab_order,
       awaiting_paste = excluded.awaiting_paste,
       updated_at = excluded.updated_at,
-      trashed_at = excluded.trashed_at
+      trashed_at = excluded.trashed_at,
+      folder_id = excluded.folder_id
+  ''';
+
+  static const _upsertFolder = '''
+    INSERT INTO folders (id, parent_id, name, expanded, tabs_collapsed,
+      created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET
+      parent_id = excluded.parent_id,
+      name = excluded.name,
+      expanded = excluded.expanded,
+      tabs_collapsed = excluded.tabs_collapsed,
+      updated_at = excluded.updated_at
   ''';
 
   List<Note> loadNotes() => [
@@ -127,6 +157,7 @@ class NoteStore {
       Note(
         id: row['id'] as String,
         title: row['title'] as String,
+        folderId: row['folder_id'] as String?,
         titleEdited: row['title_edited'] == 1,
         text: row['body'] as String,
         guess: _guess(row['mode'] as String, row['language'] as String?),
@@ -158,28 +189,69 @@ class NoteStore {
         note.createdAt.millisecondsSinceEpoch,
         note.updatedAt.millisecondsSinceEpoch,
         note.trashedAt?.millisecondsSinceEpoch,
+        note.folderId,
       ]);
     }
   });
 
   void saveNote(Note note) => saveNotes([note]);
 
-  /// Saves [notes] and [settings] and deletes the notes in [deletedNoteIds],
-  /// in one transaction: either all of it is saved or, if this throws, none
-  /// of it.
+  /// Saves [notes], [folders] and [settings] and deletes the notes and
+  /// folders with the given ids, in one transaction: either all of it is
+  /// saved or, if this throws, none of it.
   void save({
     Iterable<Note> notes = const [],
+    Iterable<Folder> folders = const [],
     Map<String, String> settings = const {},
     Iterable<String> deletedNoteIds = const [],
+    Iterable<String> deletedFolderIds = const [],
   }) => _transaction(() {
     saveNotes(notes);
+    saveFolders(folders);
     settings.forEach(setSetting);
     deleteNotes(deletedNoteIds);
+    deleteFolders(deletedFolderIds);
   });
 
   void deleteNotes(Iterable<String> ids) => _transaction(() {
     for (final id in ids) {
       _db.execute('DELETE FROM notes WHERE id = ?', [id]);
+    }
+  });
+
+  List<Folder> loadFolders() => [
+    for (final row in _db.select('SELECT * FROM folders'))
+      Folder(
+        id: row['id'] as String,
+        parentId: row['parent_id'] as String?,
+        name: row['name'] as String,
+        expanded: row['expanded'] == 1,
+        tabsCollapsed: row['tabs_collapsed'] == 1,
+        createdAt: _time(row['created_at'] as int),
+        updatedAt: _time(row['updated_at'] as int),
+      ),
+  ];
+
+  /// Inserts or updates [folders] in one transaction.
+  void saveFolders(Iterable<Folder> folders) => _transaction(() {
+    for (final folder in folders) {
+      _saveFolder.execute([
+        folder.id,
+        folder.parentId,
+        folder.name,
+        folder.expanded ? 1 : 0,
+        folder.tabsCollapsed ? 1 : 0,
+        folder.createdAt.millisecondsSinceEpoch,
+        folder.updatedAt.millisecondsSinceEpoch,
+      ]);
+    }
+  });
+
+  void saveFolder(Folder folder) => saveFolders([folder]);
+
+  void deleteFolders(Iterable<String> ids) => _transaction(() {
+    for (final id in ids) {
+      _db.execute('DELETE FROM folders WHERE id = ?', [id]);
     }
   });
 
@@ -196,6 +268,7 @@ class NoteStore {
 
   void close() {
     _saveNote.close();
+    _saveFolder.close();
     _db.close();
   }
 

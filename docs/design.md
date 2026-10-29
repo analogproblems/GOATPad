@@ -115,6 +115,30 @@ can take them over later without a rewrite.
   safety net.
 - Tab groups always mirror folders. There are no ad hoc groups in v1.
 
+## Folders and tab groups
+
+- Folders nest. The sidebar shows them as a tree, folders first and then
+  notes, each sorted by name, with closed notes marked "Closed".
+- Every folder with open notes is a tab group. The strip shows the groups in
+  sidebar order, each starting with a label carrying the folder's name, and
+  tabs that aren't in a folder come last.
+- Each folder gets a color from the Okabe-Ito palette, picked from its id so
+  it never changes. The label, the line under its tabs and its sidebar icon
+  share that color. The name is always shown too, so nothing depends on
+  telling colors apart. Colors are lightened on dark themes.
+- Clicking a label folds the group's tabs away and shows how many it holds.
+  The selected tab always stays visible, and Ctrl+Tab skips folded tabs.
+- New notes (Ctrl+N, paste as new note) go in the same folder as the tab
+  you are on. "New note here" on a folder's menu puts one in that folder.
+- Notes move by dragging them onto a folder, onto a group label, or onto the
+  NOTES heading (for the top level), or with "Move to folder…" on their
+  menu. Folders move by dragging, and never into themselves.
+- New folders are named in place. Enter or clicking away keeps the name;
+  Escape keeps the old one.
+- Deleting a folder never deletes notes. Everything in it, trashed notes
+  included, moves up to the folder it was in, and GPad asks first unless the
+  folder is empty.
+
 ## Themes and code colors
 
 The Appearance dialog has three independent choices:
@@ -167,15 +191,19 @@ The choices are saved with the other settings.
   second GPad shows "GPad is already open" instead of loading the notes and
   overwriting edits made in the first window. A crashed GPad releases the
   lock.
-- **Schema.** `notes` (random 128-bit id, title, body, mode, language,
-  status open/closed/trashed, tab order, timestamps) and `settings` (theme,
-  selected tab). The version lives in `PRAGMA user_version`; a database from
-  a newer GPad is refused rather than changed. Random ids mean notes made on
-  two machines never clash once sync arrives.
+- **Schema.** `notes` (random 128-bit id, folder, title, body, mode,
+  language, status open/closed/trashed, tab order, timestamps), `folders`
+  (random id, parent, name, whether it is expanded in the sidebar and folded
+  in the tab strip) and `settings` (theme, selected tab). The version lives
+  in `PRAGMA user_version` (2 since folders); older databases are upgraded
+  in place and a database from a newer GPad is refused rather than changed.
+  Random ids mean notes and folders made on two machines never clash once
+  sync arrives. A note or folder whose folder is missing loads at the top
+  level, so nothing can go missing from the sidebar.
 - **Trash.** Trashed notes are kept for 30 days and deleted the next time
   GPad starts after that. "Delete forever" and "Empty trash" ask first.
-- **Still to come in step 2:** folders with matching tab groups, and search
-  using SQLite FTS5 over titles and text.
+- **Still to come in step 2:** search using SQLite FTS5 over titles and
+  text.
 
 ## Sync (step 3)
 
