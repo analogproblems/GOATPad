@@ -59,6 +59,48 @@ class GoogleSignInNeeded extends SyncBackendException {
   ]);
 }
 
+/// Lets the person cancel signing in at any step, so that nothing coming
+/// after, like an answer from Google that arrives late, is used.
+class SignInCancel {
+  SignInCancel(this._signal) {
+    _signal?.then((_) => _cancelled = true);
+  }
+
+  /// Completes when the person cancels.
+  final Future<void>? _signal;
+  bool _cancelled = false;
+
+  static const exception = GoogleAuthException('Sign-in was cancelled.');
+
+  /// Throws [exception] if signing in was cancelled.
+  void check() {
+    if (_cancelled) throw exception;
+  }
+
+  /// Runs [step] and returns what it brings, unless signing in is cancelled
+  /// first: then throws [exception] at once, and drops what [step] brings.
+  Future<T> run<T>(Future<T> Function() step) async {
+    check();
+    final signal = _signal;
+    try {
+      final T result;
+      if (signal == null) {
+        result = await step();
+      } else {
+        result = await Future.any([
+          step(),
+          signal.then<T>((_) => throw exception),
+        ]);
+      }
+      check();
+      return result;
+    } on Object {
+      check();
+      rethrow;
+    }
+  }
+}
+
 /// GPad's sign-in to one Google account: a refresh token, which lasts and
 /// is kept in the keychain, and the access tokens it gets for an hour at a
 /// time.
@@ -126,7 +168,7 @@ class GoogleAuth {
   /// back to a server GPad runs on this computer until then.
   ///
   /// Fails if the person refuses, or leaves the Drive permission unticked,
-  /// or [cancel] completes first.
+  /// or [cancel] completes before GPad is signed in.
   static Future<GoogleAuth> signIn(
     GoogleClient client, {
     required Future<void> Function(Uri url) open,
@@ -134,6 +176,7 @@ class GoogleAuth {
     http.Client? httpClient,
     Duration timeout = const Duration(minutes: 10),
   }) async {
+    final cancelling = SignInCancel(cancel);
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     try {
       final redirect = 'http://127.0.0.1:${server.port}';
@@ -163,27 +206,23 @@ class GoogleAuth {
       );
       final String authorized;
       try {
-        authorized = await Future.any([
-          code,
-          if (cancel != null)
-            cancel.then<String>(
-              (_) => throw const GoogleAuthException('Sign-in was cancelled.'),
-            ),
-        ]).timeout(timeout);
+        authorized = await cancelling.run(() => code.timeout(timeout));
       } on TimeoutException {
         throw const GoogleAuthException(
           'Sign-in took too long, so GPad stopped waiting. Try again.',
         );
       }
       final http = httpClient ?? _defaultClient();
-      final tokens = await _post(http, tokenEndpoint, {
-        'grant_type': 'authorization_code',
-        'code': authorized,
-        'client_id': client.id,
-        'client_secret': client.secret,
-        'redirect_uri': redirect,
-        'code_verifier': verifier,
-      });
+      final tokens = await cancelling.run(
+        () => _post(http, tokenEndpoint, {
+          'grant_type': 'authorization_code',
+          'code': authorized,
+          'client_id': client.id,
+          'client_secret': client.secret,
+          'redirect_uri': redirect,
+          'code_verifier': verifier,
+        }),
+      );
       final granted = (tokens['scope'] as String? ?? '').split(' ');
       if (!granted.contains(scope)) {
         throw const GoogleAuthException(

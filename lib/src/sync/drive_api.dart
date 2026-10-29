@@ -61,6 +61,12 @@ class DriveFile {
       'id,name,createdTime,headRevisionId,appProperties,parents';
 }
 
+/// Thrown when a file that a request names isn't in Drive, like the folder
+/// a new file was to go in.
+class DriveFileMissing extends SyncBackendException {
+  const DriveFileMissing(super.message);
+}
+
 /// The few calls to the Drive API (v3) that sync needs, signed in through
 /// [auth], with retries when Google asks GPad to slow down or has a
 /// moment's trouble.
@@ -73,7 +79,8 @@ class DriveApi {
   }) : _http = httpClient ?? http.Client();
 
   /// The sign-in to use, or null when there is none: then every call
-  /// throws [GoogleSignInNeeded].
+  /// throws [GoogleSignInNeeded]. Asked before each request, so it can stop
+  /// requests, by throwing, once they are no longer wanted.
   final GoogleAuth? Function() auth;
   final http.Client _http;
 
@@ -116,7 +123,8 @@ class DriveApi {
   }
 
   /// Makes a file holding [content], or a folder if [content] is null.
-  /// Drive puts a new file in place whole, with its contents.
+  /// Drive puts a new file in place whole, with its contents. Throws
+  /// [DriveFileMissing] if a folder in [parents] is gone.
   Future<DriveFile> create({
     required String name,
     List<String> parents = const [],
@@ -253,6 +261,9 @@ class DriveApi {
       final auth = this.auth();
       if (auth == null) throw const GoogleSignInNeeded();
       final token = await auth.accessToken();
+      // Asked again, in case the sign-in went while the token came, say
+      // with sync turned off: then nothing more goes out with it.
+      if (!identical(this.auth(), auth)) continue;
       final request = http.Request(method, url)
         ..headers.addAll(headers)
         ..headers['Authorization'] = 'Bearer $token';
@@ -311,6 +322,9 @@ class DriveApi {
             'GPad isn\'t allowed into your Google Drive any more. Sign in '
             'again and leave the Drive box ticked.',
           ),
+        (404, _) => DriveFileMissing(
+          'Google Drive refused a request (${_message(response) ?? status})',
+        ),
         _ => SyncBackendException(
           'Google Drive refused a request (${_message(response) ?? status})',
         ),

@@ -225,6 +225,11 @@ class SyncEngine {
     final known = _version(state?.version);
     final relation = known == null ? null : remote.version.compareTo(known);
     final tag = file.isCanonical ? file.tag : null;
+    // A copy is deleted once merged, and may hold a version the record's
+    // own file doesn't, say when a computer missed that file and made
+    // another. So what came from a copy goes up to the record's own file
+    // first, or other computers would never see it.
+    final fromCopy = !file.isCanonical;
 
     switch (relation) {
       case Descent.same:
@@ -244,7 +249,14 @@ class SyncEngine {
         }
         return true;
       case Descent.newer when !state!.changedHere:
-        _apply(remote, MergeResult(remote.data), local, remote.version, tag);
+        _apply(
+          remote,
+          MergeResult(remote.data),
+          local,
+          remote.version,
+          tag,
+          upload: fromCopy,
+        );
         report.downloaded++;
         return true;
       case Descent.newer:
@@ -257,13 +269,22 @@ class SyncEngine {
           localNewer: state.changedAt.isAfter(remote.savedAt),
           remoteDevice: remote.deviceName,
         );
-        _apply(remote, merged, local, remote.version, tag, report: report);
+        _apply(
+          remote,
+          merged,
+          local,
+          remote.version,
+          tag,
+          report: report,
+          upload: fromCopy,
+        );
         report.downloaded++;
         return true;
       case Descent.concurrent:
       case null:
         if (state?.version == null && local == null) {
-          // New to this machine.
+          // New to this machine. (From a copy only if the record's own file
+          // couldn't be read, and then the copy stays.)
           _apply(remote, MergeResult(remote.data), local, remote.version, tag);
           report.downloaded++;
           return true;

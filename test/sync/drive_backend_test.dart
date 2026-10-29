@@ -335,6 +335,40 @@ void main() {
       expect(remade.parents, [drive.tagged('folder').single.id]);
       expect(drive.tagged('record').single.parents, [remade.id]);
     });
+
+    test(
+      'a computer finds its records folder gone, and makes another',
+      () async {
+        await work.list();
+        await work.write(record, bytes('one'));
+
+        // Deleted between two uploads.
+        await api().delete(drive.tagged('records').single.id);
+        await work.write('a' * 32, bytes('two'));
+        final remade = drive.tagged('records').single;
+        expect(remade.parents, [drive.tagged('folder').single.id]);
+        expect(drive.tagged('record').single.parents, [remade.id]);
+
+        // In the bin by the next round, where new files would be binned too.
+        drive.trash(remade.id);
+        await work.list();
+        await work.write('b' * 32, bytes('three'));
+        final again = drive.tagged('records').single;
+        expect(again.id, isNot(remade.id));
+
+        // Looked for once a round, not for each new file.
+        drive.requests.clear();
+        await work.write('c' * 32, bytes('four'));
+        expect(drive.requests, ['POST /upload/drive/v3/files']);
+        expect(
+          {for (final f in await work.list()) f.recordId},
+          {'b' * 32, 'c' * 32},
+        );
+        for (final file in drive.tagged('record')) {
+          expect(file.parents, [again.id]);
+        }
+      },
+    );
   });
 
   group('two computers through Drive', () {
@@ -446,6 +480,43 @@ void main() {
         notes(workPad),
         containsPair('Plan (conflict from Home laptop)', 'v1'),
       );
+    });
+
+    test('a change in a second file reaches the note\'s own file', () async {
+      final workPad = Notepad.load(NoteStore.inMemory());
+      final homePad = Notepad.load(NoteStore.inMemory());
+      final work = engineFor(workPad, 'Work PC', made.vault);
+      final home = engineFor(homePad, 'Home laptop', homeVault);
+      write(workPad, 'Plan', 'v1');
+      await work.sync();
+      await home.sync();
+
+      // Home's Drive search misses the note's file, so home's edit goes
+      // into a second one.
+      drive.hiddenFromLists.addAll(drive.tagged('record').map((f) => f.id));
+      homePad.editText(find(homePad, 'Plan'), 'v2');
+      await home.sync();
+      drive.hiddenFromLists.clear();
+      expect(drive.tagged('record'), hasLength(2));
+
+      // Work, which changed nothing, takes the edit and deletes that file.
+      await work.sync();
+      expect(find(workPad, 'Plan').text, 'v2');
+      expect(drive.tagged('record'), hasLength(1));
+
+      // A computer joining now gets the edit, though home hasn't synced
+      // since.
+      final laptopPad = Notepad.load(NoteStore.inMemory());
+      await engineFor(
+        laptopPad,
+        'Laptop',
+        crypto.fromKey(made.header, made.vault.exportKey())!,
+      ).sync();
+      expect(find(laptopPad, 'Plan').text, 'v2');
+
+      await home.sync();
+      expect(find(homePad, 'Plan').text, 'v2');
+      expect(drive.tagged('record'), hasLength(1));
     });
 
     test('a vault from another setup can\'t be synced into', () async {

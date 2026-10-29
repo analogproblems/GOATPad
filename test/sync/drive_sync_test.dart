@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goatpad/src/notepad/notepad.dart';
@@ -13,6 +15,37 @@ import 'package:goatpad/src/sync/vault.dart';
 import 'fake_drive.dart';
 
 const passphrase = 'purple tiger lamp river';
+
+/// Holds each unlock until the test lets it go on.
+class HeldUnlocks implements VaultCrypto {
+  HeldUnlocks(this._crypto);
+
+  final VaultCrypto _crypto;
+  final held = <Completer<void>>[];
+
+  @override
+  Future<NewVault> create(
+    String passphrase, {
+    KdfParams kdf = KdfParams.moderate,
+    DateTime? now,
+  }) => _crypto.create(passphrase, kdf: kdf, now: now);
+
+  @override
+  Future<Vault?> unlock(VaultHeader header, String passphrase) async {
+    final gate = Completer<void>();
+    held.add(gate);
+    await gate.future;
+    return _crypto.unlock(header, passphrase);
+  }
+
+  @override
+  Vault? unlockWithRecoveryKey(VaultHeader header, String recoveryKey) =>
+      _crypto.unlockWithRecoveryKey(header, recoveryKey);
+
+  @override
+  Vault? fromKey(VaultHeader header, Uint8List noteKey) =>
+      _crypto.fromKey(header, noteKey);
+}
 
 void main() {
   late FakeDrive drive;
@@ -33,10 +66,12 @@ void main() {
     Notepad notepad, {
     Keychain? keychain,
     GoogleClient? googleClient = FakeDrive.ownClient,
+    VaultCrypto? crypto,
   }) {
     final controller = SyncController(
       notepad,
       keychain: keychain ?? MemoryKeychain(),
+      crypto: crypto == null ? null : () async => crypto,
       kdf: KdfParams.insecureForTests,
       uploadDelay: const Duration(milliseconds: 20),
       maxWait: const Duration(milliseconds: 200),
@@ -73,6 +108,25 @@ void main() {
 
   bool has(Notepad notepad, String text) =>
       notepad.keptNotes.any((n) => n.text == text);
+
+  /// Holds the next request to "[METHOD] [path]" until [release] completes,
+  /// and completes [held] when it comes.
+  void hold(String request, Completer<void> held, Future<void> release) {
+    drive.before = (r) async {
+      if ('${r.method} ${r.url.path}' != request) return;
+      drive.before = null;
+      held.complete();
+      await release;
+    };
+  }
+
+  /// Lets the requests under way end, and returns any that follow.
+  Future<List<String>> requestsAfter(Completer<void> release) async {
+    final before = drive.requests.length;
+    release.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    return drive.requests.sublist(before);
+  }
 
   Future<SyncController> setUpFirst(
     Notepad notepad, {
@@ -298,6 +352,151 @@ void main() {
       expect(has(home, 'at home'), isTrue);
     },
   );
+
+  test('a round under way when sync moves to another account ends', () async {
+    final work = notepadWith('first');
+    final sync = await setUpFirst(work);
+    final oldVault = sync.config!.vault.id;
+
+    // The edit's upload is held; meanwhile someone deletes the note's file
+    // by hand, so GPad would go on to make it again.
+    final held = Completer<void>();
+    final release = Completer<void>();
+    hold(
+      'PATCH /upload/drive/v3/files/${drive.tagged('record').single.id}',
+      held,
+      release.future,
+    );
+    work.editText(
+      work.keptNotes.firstWhere((n) => n.text == 'first'),
+      'edited',
+    );
+    final round = sync.syncNow();
+    await held.future;
+    drive.files.removeWhere((_, f) => f.appProperties['gpad'] == 'record');
+
+    // And sync is set up again with someone else's Drive.
+    await sync.turnOff();
+    drive.account = 'someone@example.com';
+    final checked = await sync.signInToDrive();
+    expect(checked.vault, isNull);
+    await sync.create(
+      place: checked.place,
+      passphrase: 'another passphrase',
+      deviceName: 'Work PC',
+      remember: false,
+    );
+    release.complete();
+    await round;
+    await settle(sync);
+    expect(sync.status, SyncStatus.synced);
+
+    // Nothing of the old notes went to the new account.
+    expect(
+      drive.files.values.where(
+        (f) =>
+            f.owner == 'someone@example.com' &&
+            f.appProperties['vault'] == oldVault,
+      ),
+      isEmpty,
+    );
+    expect(drive.tagged('vault', owner: 'someone@example.com'), hasLength(1));
+  });
+
+  test('cancelling after the browser came back signs nothing in', () async {
+    await setUpFirst(notepadWith('at work'));
+    final home = controllerFor(notepadWith('at home'));
+    for (final request in [
+      'POST /token',
+      'GET /drive/v3/about',
+      'GET /drive/v3/files',
+    ]) {
+      final cancel = Completer<void>();
+      final held = Completer<void>();
+      final release = Completer<void>();
+      hold(request, held, release.future);
+      final signingIn = home.signInToDrive(cancel: cancel.future);
+      await held.future;
+      cancel.complete();
+      await expectLater(
+        signingIn,
+        throwsA(
+          isA<GoogleAuthException>().having(
+            (e) => e.message,
+            'message',
+            contains('cancelled'),
+          ),
+        ),
+        reason: request,
+      );
+      // What Google sends after isn't used to ask for more.
+      expect(await requestsAfter(release), isEmpty, reason: request);
+    }
+  });
+
+  test('cancelling signing in again leaves sync signed out', () async {
+    final keychain = MemoryKeychain();
+    final sync = await setUpFirst(notepadWith('mine'), keychain: keychain);
+    drive.revokeAll();
+    await sync.syncNow();
+    expect(sync.status, SyncStatus.signedOut);
+
+    for (final request in ['POST /token', 'GET /drive/v3/about']) {
+      final cancel = Completer<void>();
+      final held = Completer<void>();
+      final release = Completer<void>();
+      hold(request, held, release.future);
+      final signingIn = sync.signInAgain(cancel: cancel.future);
+      await held.future;
+      cancel.complete();
+      await expectLater(
+        signingIn,
+        throwsA(isA<GoogleAuthException>()),
+        reason: request,
+      );
+      expect(await requestsAfter(release), isEmpty, reason: request);
+      expect(sync.status, SyncStatus.signedOut, reason: request);
+      expect(
+        keychain.secrets.keys.where((k) => k.startsWith('sync-google')),
+        isEmpty,
+        reason: request,
+      );
+    }
+  });
+
+  test('joining twice at once, as with Enter pressed twice, joins', () async {
+    final work = await setUpFirst(notepadWith('at work'));
+    final home = notepadWith('at home');
+    final crypto = HeldUnlocks(await VaultCrypto.load());
+    final sync = controllerFor(home, crypto: crypto);
+    final checked = await sync.signInToDrive();
+    Future<bool> join() => sync.join(
+      place: checked.place,
+      vault: checked.vault!,
+      passphrase: passphrase,
+      deviceName: 'Home laptop',
+      remember: false,
+    );
+    final first = join();
+    final second = join().then<Object?>((ok) => ok, onError: (Object e) => e);
+    for (var i = 0; i < 100 && crypto.held.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    crypto.held.first.complete();
+    expect(await first, isTrue);
+    for (final unlock in crypto.held.skip(1)) {
+      unlock.complete();
+    }
+    expect(await second, isA<StateError>());
+
+    // Still syncing.
+    await settle(sync);
+    expect(sync.status, SyncStatus.synced);
+    home.editText(home.newNote(), 'after joining');
+    await settle(sync);
+    await work.syncNow();
+    expect(has(work.notepad, 'after joining'), isTrue);
+  });
 
   test('without a keychain, GPad asks for both after a restart', () async {
     final work = notepadWith('no keychain here');

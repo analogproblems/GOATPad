@@ -123,17 +123,23 @@ class _SyncDialogState extends State<_SyncDialog> {
     super.dispose();
   }
 
-  void _go(_Page page) => setState(() {
-    _page = page;
-    _error = null;
-    _passphrase.clear();
-    _again.clear();
-    _recoveryKey.clear();
-    _useRecoveryKey = false;
-  });
+  void _go(_Page page) {
+    if (!mounted) return;
+    setState(() {
+      _page = page;
+      _error = null;
+      _passphrase.clear();
+      _again.clear();
+      _recoveryKey.clear();
+      _useRecoveryKey = false;
+    });
+  }
 
   /// Runs [action], showing that GPad is busy, and shows what went wrong.
+  /// Does nothing while GPad is busy already, as when someone presses
+  /// Enter twice.
   Future<void> _work(Future<void> Function() action) async {
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -201,7 +207,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       (showUrl, cancel) =>
           sync.signInToDrive(ownClient: own, showUrl: showUrl, cancel: cancel),
     );
-    if (checked == null) return;
+    if (checked == null || !mounted) return;
     _checked = checked;
     _go(checked.vault == null ? _Page.create : _Page.join);
   });

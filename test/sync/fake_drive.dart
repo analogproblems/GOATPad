@@ -18,6 +18,7 @@ class FakeFile {
     required this.parents,
     required this.appProperties,
     required this.createdTime,
+    required this.owner,
     this.content,
   });
 
@@ -27,6 +28,9 @@ class FakeFile {
   List<String> parents;
   Map<String, String> appProperties;
   final DateTime createdTime;
+
+  /// Whose Drive it is in.
+  final String owner;
   Uint8List? content;
   int revision = 1;
   bool trashed = false;
@@ -48,10 +52,13 @@ class FakeFile {
 /// Google's sign-in service and the Drive API, in memory, as far as GPad
 /// uses them. Computers syncing through one Drive share one of these and
 /// use its [client].
+///
+/// Each Google account has a Drive of its own here, which only sign-ins
+/// to that account see.
 class FakeDrive {
   FakeDrive({this.account = 'jason@example.com'});
 
-  /// Whose Drive it is; tests change it to sign in as someone else.
+  /// Who signs in from now on; tests change it to sign in as someone else.
   String account;
 
   static const ownClient = GoogleClient(
@@ -79,9 +86,17 @@ class FakeDrive {
   Future<void> Function(http.Request request)? after;
 
   final refreshTokens = <String>{};
-  final _accessTokens = <String>{};
+
+  /// Whose each refresh token is, if not [account]'s.
+  final _owners = <String, String>{};
+
+  /// Whose each access token is.
+  final _accessTokens = <String, String>{};
   final _codes =
-      <String, ({String challenge, String redirect, String clientId})>{};
+      <
+        String,
+        ({String challenge, String redirect, String clientId, String account})
+      >{};
   final _failures =
       <({String method, String path, int status, String? reason})>[];
   var _next = 0;
@@ -125,10 +140,14 @@ class FakeDrive {
     }
   }
 
-  /// The files GPad tagged as [role], and not in the bin.
-  List<FakeFile> tagged(String role) => [
+  /// The files GPad tagged as [role], and not in the bin, in [owner]'s
+  /// Drive or anyone's.
+  List<FakeFile> tagged(String role, {String? owner}) => [
     for (final file in files.values)
-      if (file.appProperties['gpad'] == role && !file.trashed) file,
+      if (file.appProperties['gpad'] == role &&
+          !file.trashed &&
+          (owner == null || file.owner == owner))
+        file,
   ];
 
   /// Acts as the browser: the person allows GPad in.
@@ -145,6 +164,7 @@ class FakeDrive {
       challenge: params['code_challenge']!,
       redirect: params['redirect_uri']!,
       clientId: params['client_id']!,
+      account: account,
     );
     await comeBack(url, {'code': code, 'state': params['state']!});
   }
@@ -209,53 +229,64 @@ class FakeDrive {
         }
         final refresh = 'refresh-${_next++}';
         refreshTokens.add(refresh);
+        _owners[refresh] = code.account;
         return _json(200, {
-          ..._newAccess(),
+          ..._newAccess(code.account),
           'refresh_token': refresh,
           'scope': grantedScope,
         });
       case 'refresh_token':
-        if (!refreshTokens.contains(form['refresh_token'])) {
+        final refresh = form['refresh_token'];
+        if (!refreshTokens.contains(refresh)) {
           return _json(400, {'error': 'invalid_grant'});
         }
-        return _json(200, {..._newAccess(), 'scope': grantedScope});
+        return _json(200, {
+          ..._newAccess(_owners[refresh] ?? account),
+          'scope': grantedScope,
+        });
     }
     return _json(400, {'error': 'unsupported_grant_type'});
   }
 
-  Map<String, Object?> _newAccess() {
+  Map<String, Object?> _newAccess(String owner) {
     final access = 'access-${_next++}';
-    _accessTokens.add(access);
+    _accessTokens[access] = owner;
     return {'access_token': access, 'expires_in': 3599, 'token_type': 'Bearer'};
   }
 
   http.Response _drive(http.Request request) {
     final auth = request.headers['Authorization'] ?? '';
-    if (!auth.startsWith('Bearer ') ||
-        !_accessTokens.contains(auth.substring(7))) {
-      return _error(401, 'authError');
-    }
+    final owner = auth.startsWith('Bearer ')
+        ? _accessTokens[auth.substring(7)]
+        : null;
+    if (owner == null) return _error(401, 'authError');
     final path = request.url.path;
     final query = request.url.queryParameters;
     final method = request.method;
     if (path == '/drive/v3/about' && method == 'GET') {
       return _json(200, {
-        'user': {'emailAddress': account},
+        'user': {'emailAddress': owner},
       });
     }
-    if (path == '/drive/v3/files' && method == 'GET') return _list(query);
+    if (path == '/drive/v3/files' && method == 'GET') {
+      return _list(query, owner);
+    }
     if (path == '/drive/v3/files' && method == 'POST') {
-      return _create(jsonDecode(request.body) as Map<String, Object?>, null);
+      return _create(
+        jsonDecode(request.body) as Map<String, Object?>,
+        null,
+        owner,
+      );
     }
     if (path == '/upload/drive/v3/files' && method == 'POST') {
       if (query['uploadType'] != 'multipart') return _error(400, 'badRequest');
       final (metadata, content) = _multipart(request);
-      return _create(metadata, content);
+      return _create(metadata, content, owner);
     }
     final upload = RegExp(r'^/upload/drive/v3/files/([^/]+)$').firstMatch(path);
     if (upload != null && method == 'PATCH') {
       final file = files[upload[1]];
-      if (file == null) return _notFound(upload[1]!);
+      if (file == null || file.owner != owner) return _notFound(upload[1]!);
       file
         ..content = request.bodyBytes
         ..revision += 1;
@@ -264,7 +295,7 @@ class FakeDrive {
     final one = RegExp(r'^/drive/v3/files/([^/]+)$').firstMatch(path);
     if (one != null) {
       final file = files[one[1]];
-      if (file == null) return _notFound(one[1]!);
+      if (file == null || file.owner != owner) return _notFound(one[1]!);
       switch (method) {
         case 'GET' when query['alt'] == 'media':
           return http.Response.bytes(file.content ?? Uint8List(0), 200);
@@ -278,11 +309,14 @@ class FakeDrive {
     return _error(400, 'badRequest');
   }
 
-  http.Response _list(Map<String, String> query) {
+  http.Response _list(Map<String, String> query, String owner) {
     final q = query['q'] ?? '';
     final matching = [
       for (final file in files.values.toList().reversed)
-        if (!hiddenFromLists.contains(file.id) && _matches(file, q)) file,
+        if (file.owner == owner &&
+            !hiddenFromLists.contains(file.id) &&
+            _matches(file, q))
+          file,
     ];
     final size = [
       int.parse(query['pageSize'] ?? '100'),
@@ -297,13 +331,20 @@ class FakeDrive {
     });
   }
 
-  http.Response _create(Map<String, Object?> metadata, Uint8List? content) {
+  http.Response _create(
+    Map<String, Object?> metadata,
+    Uint8List? content,
+    String owner,
+  ) {
     final parents = [
       for (final p in metadata['parents'] as List<Object?>? ?? const [])
         p as String,
     ];
     for (final parent in parents) {
-      if (files[parent] case final folder? when folder.isFolder) continue;
+      if (files[parent] case final folder?
+          when folder.isFolder && folder.owner == owner) {
+        continue;
+      }
       return _notFound(parent);
     }
     _clock = _clock.add(const Duration(milliseconds: 1));
@@ -319,8 +360,11 @@ class FakeDrive {
           key: value as String,
       },
       createdTime: _clock,
+      owner: owner,
       content: content,
     );
+    // In a folder in the bin, it's in the bin too.
+    file.trashed = parents.any((p) => files[p]!.trashed);
     files[file.id] = file;
     return _json(200, file.toJson());
   }

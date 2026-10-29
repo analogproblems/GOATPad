@@ -20,7 +20,7 @@ import 'vault.dart';
 /// - of two vaults, the older is the vault, and the computer that made the
 ///   other steps back;
 /// - of two files for one note, the older is its own file, and the other is
-///   merged in like a sync tool's copy, then deleted.
+///   merged into it like a sync tool's copy, then deleted.
 class DriveBackend implements SyncBackend {
   DriveBackend(this.api, {required this.account, this.vaultId});
 
@@ -52,7 +52,11 @@ class DriveBackend implements SyncBackend {
   /// Every file [list] returned, by the name it gave it.
   final _byName = <String, String>{};
 
+  /// The records folder, as last found or made, and whether it was found
+  /// since the last [list]: once a round, GPad makes sure nobody deleted it
+  /// or put it in the bin.
   String? _recordsFolder;
+  bool _recordsFolderChecked = false;
   ({String id, String? revision, Uint8List bytes})? _vaultCache;
 
   @override
@@ -122,7 +126,10 @@ class DriveBackend implements SyncBackend {
       // after a retry, count as this one's.)
       final winner = await _vault();
       won = winner?.appProperties[_vaultTag] == id;
-      if (won) _recordsFolder = records.id;
+      if (won) {
+        _recordsFolder = records.id;
+        _recordsFolderChecked = true;
+      }
       return won;
     } finally {
       if (!won) {
@@ -156,6 +163,7 @@ class DriveBackend implements SyncBackend {
     }
     _canonical.clear();
     _byName.clear();
+    _recordsFolderChecked = false;
     final files = <RemoteFile>[];
     for (final MapEntry(key: recordId, value: group) in byRecord.entries) {
       group.sort((a, b) => a.isOlderThan(b) ? -1 : (b.isOlderThan(a) ? 1 : 0));
@@ -195,34 +203,57 @@ class DriveBackend implements SyncBackend {
     // Drive returns the file as this upload left it, so the tag is this
     // upload's, even if another computer replaces it a moment later.
     var written = existing == null ? null : await api.update(existing, bytes);
-    written ??= await api.create(
-      name: name,
-      parents: [await _recordsFolderId(vault)],
-      appProperties: {_role: 'record', _vaultTag: vault},
-      content: bytes,
-    );
+    written ??= await _create(name, vault, bytes);
     _canonical[recordId] = written.id;
     _byName[name] = written.id;
     return RemoteFile(name: name, recordId: recordId, tag: _tag(written));
   }
 
+  /// Makes a record file in the records folder, which someone may have
+  /// deleted since GPad last looked: then in a new one.
+  Future<DriveFile> _create(String name, String vault, Uint8List bytes) async {
+    for (var again = false; ; again = true) {
+      final folder = await _recordsFolderId(vault);
+      try {
+        return await api.create(
+          name: name,
+          parents: [folder],
+          appProperties: {_role: 'record', _vaultTag: vault},
+          content: bytes,
+        );
+      } on DriveFileMissing {
+        if (again) rethrow;
+        _recordsFolder = null;
+      }
+    }
+  }
+
   /// Where new record files go: the vault's records folder, or a new one
-  /// if someone deleted it.
+  /// if someone deleted it or put it in the bin.
   Future<String> _recordsFolderId(String vault) async {
-    final known = _recordsFolder;
-    if (known != null) return known;
+    if (_recordsFolder case final known?) {
+      if (_recordsFolderChecked || await api.get(known) != null) {
+        _recordsFolderChecked = true;
+        return known;
+      }
+    }
     final folders = await api.list(
       '${_has(_role, 'records')} and ${_has(_vaultTag, vault)} '
       'and trashed = false',
     );
-    if (folders.isNotEmpty) return _recordsFolder = _oldest(folders).id;
-    final parents = (await _vault())?.parents ?? const [];
-    final made = await api.create(
-      name: 'records',
-      parents: parents.take(1).toList(),
-      appProperties: {_role: 'records', _vaultTag: vault},
-    );
-    return _recordsFolder = made.id;
+    final String id;
+    if (folders.isNotEmpty) {
+      id = _oldest(folders).id;
+    } else {
+      final parents = (await _vault())?.parents ?? const [];
+      id = (await api.create(
+        name: 'records',
+        parents: parents.take(1).toList(),
+        appProperties: {_role: 'records', _vaultTag: vault},
+      )).id;
+    }
+    _recordsFolderChecked = true;
+    return _recordsFolder = id;
   }
 
   @override

@@ -153,6 +153,39 @@ void main() {
     await _finish(tester, sync);
   });
 
+  testWidgets('pressing Enter, then the button, joins once', (tester) async {
+    final first = _controller(Notepad.load(NoteStore.inMemory()));
+    await tester.runAsync(() async {
+      final folder = p.join(dir.path, 'GPad');
+      await Directory(folder).create();
+      await first.create(
+        place: FolderPlace(folder),
+        passphrase: _passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await first.finish();
+    });
+    first.dispose();
+
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = _controller(notepad);
+    await _pumpApp(tester, notepad, sync);
+    await tester.tap(_inSidebar('Sync is off'));
+    await tester.pump();
+    await tester.enterText(_field('Sync folder'), dir.path);
+    await tester.tap(find.text('Next'));
+    await _waitFor(tester, find.text('Unlock your notes'));
+
+    await tester.enterText(_field('Passphrase'), _passphrase);
+    // The second before the dialog shows it is busy.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.tap(find.text('Unlock and sync'));
+    await _waitFor(tester, _inSidebar('Synced'));
+    expect(find.text('Unlock your notes'), findsNothing);
+    await _finish(tester, sync);
+  });
+
   testWidgets('setting sync up with Google Drive signs in in the browser', (
     tester,
   ) async {

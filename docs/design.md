@@ -373,7 +373,9 @@ are unchanged since last time, and opens the rest:
   `.sync-conflict-`) are merged in like any other version, then deleted:
   first renamed to a copy name of GPad's own, then deleted only if it is
   still the version that was read. A copy that changed, or one GPad
-  stopped before deleting, is read again next round.
+  stopped before deleting, is read again next round. What a copy brought
+  goes up to the note's own file before the copy is deleted, so a change
+  that only reached a copy isn't lost to computers that join later.
 - **A file that can't be opened** (damaged, changed by something else, or
   saved by a newer GPad) is left alone and reported in the sync dialog. It
   is tried again only once it changes. Changes here to that note wait
@@ -414,8 +416,8 @@ in three ways, and the backend makes up for each:
   lag and hide the older one, that computer finds it on its next round and
   stops, with "a different set of GPad notes", before writing anything
   more; what it wrote is tagged with its own vault, so nobody else reads
-  it. A second file for one note is read like a sync tool's copy: merged,
-  then deleted.
+  it. A second file for one note is read like a sync tool's copy: merged
+  into the first, then deleted.
 - **No conditional writes or deletes.** Drive can't replace or delete a
   file only if it is unchanged. A file's tag is its id and head revision,
   taken from Drive's answer to the upload, so it is the version GPad wrote

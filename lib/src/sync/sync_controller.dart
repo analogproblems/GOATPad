@@ -221,6 +221,14 @@ class SyncController extends ChangeNotifier {
   bool _again = false;
   bool _disposed = false;
 
+  /// Whether [create] or [join] is under way.
+  bool _settingUp = false;
+
+  /// Counts [_stop]s. A run's requests to Google end once it changes, so a
+  /// round under way when sync is turned off or set up again never goes on
+  /// with the sign-in that comes next, which may be another account's.
+  int _stops = 0;
+
   SyncConfig? get config => _config;
   SyncStatus get status => _status;
 
@@ -309,11 +317,14 @@ class SyncController extends ChangeNotifier {
   }) async {
     final client = ownClient ?? googleClient;
     if (client == null) throw const GoogleAuthException(_noClient);
+    final cancelling = SignInCancel(cancel);
     final auth = await _signIn(client, showUrl, cancel);
-    final api = DriveApi(() => auth, httpClient: _http);
-    final account = await api.account();
+    final api = _signInApi(auth, cancelling);
+    final account = await cancelling.run(api.account);
     final place = DrivePlace(account: account, client: ownClient);
-    final bytes = await DriveBackend(api, account: account).readVault();
+    final bytes = await cancelling.run(
+      DriveBackend(api, account: account).readVault,
+    );
     final vault = bytes == null ? null : VaultHeader.decode(bytes);
     _signingUp = (place: place, auth: auth);
     return PlaceCheck(place, vault);
@@ -329,8 +340,9 @@ class SyncController extends ChangeNotifier {
     final place = config.place as DrivePlace;
     final client = place.client ?? googleClient;
     if (client == null) throw const GoogleAuthException(_noClient);
+    final cancelling = SignInCancel(cancel);
     final auth = await _signIn(client, showUrl, cancel);
-    final account = await DriveApi(() => auth, httpClient: _http).account();
+    final account = await cancelling.run(_signInApi(auth, cancelling).account);
     if (account.toLowerCase() != place.account.toLowerCase()) {
       throw GoogleAuthException(
         'That\'s $account. Sign in as ${place.account}, the account these '
@@ -361,6 +373,12 @@ class SyncController extends ChangeNotifier {
     httpClient: _http,
   );
 
+  /// Drive, signed in through [auth], until signing in is cancelled.
+  DriveApi _signInApi(GoogleAuth auth, SignInCancel cancelling) => DriveApi(() {
+    cancelling.check();
+    return auth;
+  }, httpClient: _http);
+
   /// The backend for setting up or joining [place].
   SyncBackend _setupBackend(SyncPlace place) => switch (place) {
     FolderPlace(:final path) => _backendFor(path),
@@ -378,6 +396,18 @@ class SyncController extends ChangeNotifier {
     return signingUp.auth;
   }
 
+  /// Runs [setUp], unless another [create] or [join] is under way, as when
+  /// someone presses Enter twice.
+  Future<T> _settingUpWith<T>(Future<T> Function() setUp) async {
+    if (_settingUp) throw StateError('Sync is being set up already');
+    _settingUp = true;
+    try {
+      return await setUp();
+    } finally {
+      _settingUp = false;
+    }
+  }
+
   /// Starts syncing into [place], which has no vault yet, with notes
   /// locked by [passphrase]. Returns the recovery key, to show once.
   Future<String> create({
@@ -385,7 +415,7 @@ class SyncController extends ChangeNotifier {
     required String passphrase,
     required String deviceName,
     required bool remember,
-  }) async {
+  }) => _settingUpWith(() async {
     final backend = _setupBackend(place);
     final made = await (await _vaultCrypto).create(passphrase, kdf: kdf);
     final bool created;
@@ -410,7 +440,7 @@ class SyncController extends ChangeNotifier {
     }
     await _begin(place, made.header, made.vault, deviceName, remember);
     return made.recoveryKey;
-  }
+  });
 
   /// Joins the notes another computer keeps in [place]. Returns false if
   /// [passphrase] (or [recoveryKey]) doesn't unlock them.
@@ -421,13 +451,13 @@ class SyncController extends ChangeNotifier {
     String? recoveryKey,
     required String deviceName,
     required bool remember,
-  }) async {
+  }) => _settingUpWith(() async {
     if (place is DrivePlace) _signingUpTo(place);
     final unlocked = await _unlock(vault, passphrase, recoveryKey);
     if (unlocked == null) return false;
     await _begin(place, vault, unlocked, deviceName, remember);
     return true;
-  }
+  });
 
   /// Unlocks sync after a restart on a computer without a keychain, or
   /// whose keychain lost the key. Returns false for a wrong passphrase.
@@ -528,10 +558,11 @@ class SyncController extends ChangeNotifier {
     String deviceName,
     bool remember,
   ) async {
+    // Taken first, so a setup that can't go ahead leaves sync as it was.
+    final google = place is DrivePlace ? _signingUpTo(place) : null;
     // A round still under way for the old setup stops before anything
     // here changes.
     _stop();
-    final google = place is DrivePlace ? _signingUpTo(place) : null;
     _signingUp = null;
     final store = notepad.store;
     // What sync knows belongs to one vault; with another, start afresh.
@@ -600,10 +631,16 @@ class SyncController extends ChangeNotifier {
 
   void _run(SyncConfig config, Vault vault) {
     _stop();
+    final run = _stops;
     final backend = switch (config.place) {
       FolderPlace(:final path) => _backendFor(path),
       DrivePlace(:final account) => DriveBackend(
-        DriveApi(() => _google, httpClient: _http),
+        DriveApi(
+          // The sign-in can change with signing in again, but only to the
+          // same account; once this run stops, its requests stop too.
+          () => run == _stops ? _google : throw const SyncCancelled(),
+          httpClient: _http,
+        ),
         account: account,
         vaultId: config.vault.id,
       ),
@@ -637,6 +674,7 @@ class SyncController extends ChangeNotifier {
   }
 
   void _stop() {
+    _stops++;
     _soon?.cancel();
     _soon = null;
     _firstPending = null;
