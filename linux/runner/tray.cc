@@ -111,11 +111,23 @@ gchar* icon_folder() {
   return g_build_filename(folder, "data", "tray", nullptr);
 }
 
+// The tray went away, as when its GNOME extension is turned off: show the
+// window rather than strand GPad without a way back.
+void connection_changed(AppIndicator* indicator, gboolean connected,
+                        gpointer data) {
+  Tray* tray = static_cast<Tray*>(data);
+  if (!connected && !gtk_widget_get_visible(GTK_WIDGET(tray->window))) {
+    show_window(tray);
+  }
+}
+
 void make_indicator(Tray* tray) {
   g_autofree gchar* icons = icon_folder();
   tray->indicator = tray->api.new_with_path(
       "gpad", "gpad-tray", kCategoryApplicationStatus, icons);
   tray->api.set_title(tray->indicator, "GPad");
+  g_signal_connect(tray->indicator, "connection-changed",
+                   G_CALLBACK(connection_changed), tray);
 
   GtkWidget* menu = gtk_menu_new();
   tray->status_item = gtk_menu_item_new_with_label("GPad");

@@ -16,8 +16,8 @@ import 'package:goatpad/src/ui/sidebar.dart';
 import 'package:goatpad/src/ui/tray.dart';
 import 'package:path/path.dart' as p;
 
-/// The runner's side of the tray channel: what it was asked, and whether
-/// it has a tray.
+/// The runner's side of the tray channel: what it was asked, whether it
+/// has a tray, and whether it manages to show the icon.
 class _Runner {
   _Runner({this.available = true}) {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -29,7 +29,11 @@ class _Runner {
           );
           return switch (call.method) {
             'available' => available,
-            'show' => true,
+            'show' => switch (icon) {
+              _Icon.shows => true,
+              _Icon.refused => false,
+              _Icon.fails => throw PlatformException(code: 'no-tray'),
+            },
             _ => null,
           };
         });
@@ -38,6 +42,7 @@ class _Runner {
   static const channel = MethodChannel(Tray.channelName);
 
   final bool available;
+  var icon = _Icon.shows;
   final calls = <String>[];
 
   /// How many times GPad quit for good.
@@ -62,6 +67,8 @@ class _Runner {
       .defaultBinaryMessenger
       .setMockMethodCallHandler(channel, null);
 }
+
+enum _Icon { shows, refused, fails }
 
 SyncController _controller(Notepad notepad) => SyncController(
   notepad,
@@ -258,6 +265,83 @@ void main() {
     expect(runner.calls.last, startsWith('show GPad: '));
     await tester.tap(find.text('Close'));
     await tester.pump();
+    await finish(tester, sync);
+  });
+
+  for (final icon in [_Icon.refused, _Icon.fails]) {
+    testWidgets('closing quits while the icon can\'t be shown (${icon.name})', (
+      tester,
+    ) async {
+      final runner = _Runner()..icon = icon;
+      addTearDown(runner.stop);
+      final (_, sync, tray) = await pumpApp(tester, runner);
+      expect(tray.keepsRunning, isFalse);
+
+      var response = await tester.runAsync(
+        () => tester.binding.handleRequestAppExit(),
+      );
+      expect(response, AppExitResponse.exit);
+      expect(runner.calls, isNot(contains('hideWindow')));
+
+      // Closing asks for the icon again; once it is there, closing hides.
+      runner.icon = _Icon.shows;
+      response = await tester.runAsync(
+        () => tester.binding.handleRequestAppExit(),
+      );
+      expect(response, AppExitResponse.cancel);
+      expect(tray.keepsRunning, isTrue);
+      expect(runner.calls.last, 'hideWindow');
+      await finish(tester, sync);
+    });
+  }
+
+  testWidgets('Quit chosen twice quits once', (tester) async {
+    final runner = _Runner();
+    addTearDown(runner.stop);
+    final (_, sync, _) = await pumpApp(tester, runner);
+    await tester.runAsync(
+      () => Future.wait([runner.choose('quit'), runner.choose('quit')]),
+    );
+    expect(runner.exits, 1);
+    await finish(tester, sync);
+  });
+
+  testWidgets('with saving failing, closing hides and Quit asks first', (
+    tester,
+  ) async {
+    final runner = _Runner();
+    addTearDown(runner.stop);
+    final (notepad, sync, _) = await pumpApp(tester, runner);
+    final db = notepad.store.database;
+    final pages = db.select('PRAGMA page_count').single.values.single;
+    db.execute('PRAGMA max_page_count = $pages');
+    notepad.editText(notepad.newNote(), 'x' * 100000);
+    expect(notepad.flush(), isFalse);
+
+    // The edit stays in memory, and saving goes on trying.
+    final response = await tester.runAsync(
+      () => tester.binding.handleRequestAppExit(),
+    );
+    expect(response, AppExitResponse.cancel);
+    expect(runner.calls.last, 'hideWindow');
+
+    // Quit brings the window back to ask, and staying quits nothing.
+    final quit = runner.choose('quit');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(runner.calls, contains('showWindow'));
+    expect(find.text('Your latest changes aren\'t saved'), findsOneWidget);
+    await tester.tap(find.text('Keep GPad open'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await quit;
+    expect(runner.exits, 0);
+
+    final again = runner.choose('quit');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Quit anyway'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await again;
+    expect(runner.exits, 1);
+    db.execute('PRAGMA max_page_count = 1000000');
     await finish(tester, sync);
   });
 }

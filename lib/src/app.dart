@@ -63,7 +63,7 @@ class _GPadAppState extends State<GPadApp> {
   /// saving and syncing, and quits from the tray icon's menu.
   Future<AppExitResponse> _exitRequested() async {
     final tray = widget.tray;
-    if (tray != null && tray.keepsRunning) {
+    if (tray != null && await tray.readyToKeepRunning()) {
       // What is typed so far goes up now, not only once GPad quits.
       widget.notepad.flush();
       widget.sync?.syncNow();
@@ -73,16 +73,24 @@ class _GPadAppState extends State<GPadApp> {
     return await _mayQuit() ? AppExitResponse.exit : AppExitResponse.cancel;
   }
 
-  /// Quit, chosen in the tray icon's menu.
+  /// Quit, chosen in the tray icon's menu (once, if chosen twice).
   Future<void> _quitFromTray() async {
-    if (!widget.notepad.flush()) {
-      // Ask in the window, which may be hidden.
-      await widget.tray?.showWindow();
+    if (_quitting) return;
+    _quitting = true;
+    try {
+      if (!widget.notepad.flush()) {
+        // Ask in the window, which may be hidden.
+        await widget.tray?.showWindow();
+      }
+      if (!await _mayQuit()) return;
+      await widget.tray?.remove();
+      await widget.exitForGood();
+    } finally {
+      _quitting = false;
     }
-    if (!await _mayQuit()) return;
-    await widget.tray?.remove();
-    await widget.exitForGood();
   }
+
+  bool _quitting = false;
 
   /// Saves and uploads what is waiting, and returns whether GPad may quit:
   /// when everything is saved, or the person says to quit anyway.

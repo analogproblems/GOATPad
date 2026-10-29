@@ -39,6 +39,9 @@ class Tray {
   HWND window_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
   HICON icon_ = nullptr;
+  // Whether Dart asked for the icon, and whether Windows took it: it
+  // refuses while Explorer isn't running.
+  bool wanted_ = false;
   bool shown_ = false;
   std::wstring status_ = L"GPad";
   UINT taskbar_created_;

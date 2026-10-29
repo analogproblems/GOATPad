@@ -27,9 +27,16 @@ class Tray extends ChangeNotifier {
   Future<void> Function()? onQuit;
 
   bool? _available;
+
+  /// Whether GPad asked for the icon, and whether the runner said it is
+  /// there, as it may not be: Windows refuses while Explorer is down.
+  bool _wanted = false;
   bool _shown = false;
   String? _status;
   bool _disposed = false;
+
+  /// Asking the runner for the icon, while it answers.
+  Future<void>? _showing;
 
   /// Whether this desktop has a tray GPad can put its icon in; null until
   /// [start] has asked.
@@ -39,8 +46,18 @@ class Tray extends ChangeNotifier {
   bool get enabled => sync.notepad.store.setting(_settingKey) == 'on';
 
   /// Whether closing the window keeps GPad running in the tray now: it is
-  /// turned on, this desktop has a tray, and sync is set up.
-  bool get keepsRunning => enabled && _available == true && sync.config != null;
+  /// turned on, sync is set up, and the icon is there to come back by.
+  bool get keepsRunning => _wantsIcon && _wanted && _shown;
+
+  bool get _wantsIcon =>
+      enabled && _available == true && sync.config != null && !_disposed;
+
+  /// Whether closing the window should keep GPad running in the tray,
+  /// trying once more to put the icon there if it isn't yet.
+  Future<bool> readyToKeepRunning() async {
+    if (!keepsRunning && _wantsIcon) await _update();
+    return keepsRunning;
+  }
 
   /// Asks the runner whether there is a tray, and shows the icon if it is
   /// turned on.
@@ -72,26 +89,45 @@ class Tray extends ChangeNotifier {
     MethodChannel channel = const MethodChannel(channelName),
   }) => _invoke<void>(channel, 'allowForeground');
 
-  /// Takes the icon away, as GPad quits.
-  Future<void> remove() async {
-    if (!_shown) return;
-    _shown = false;
-    _status = null;
-    await _call<void>('remove');
-  }
-
   Future<void> _update() async {
-    if (_disposed || _available != true) return;
-    if (!keepsRunning) {
+    if (!_wantsIcon) {
       await remove();
       return;
     }
     final status = 'GPad: ${syncSummary(sync).label}';
-    if (_shown && status == _status) return;
-    final first = !_shown;
-    _shown = true;
-    _status = status;
-    await _call<bool>(first ? 'show' : 'status', {'status': status});
+    if (_shown) {
+      if (status == _status) return;
+      _status = status;
+      await _call<void>('status', {'status': status});
+      return;
+    }
+    if (_showing case final showing?) return showing;
+    final showing = _showing = _show(status);
+    try {
+      await showing;
+    } finally {
+      if (_showing == showing) _showing = null;
+    }
+  }
+
+  /// Until the runner says the icon is there, closing quits; the next
+  /// change, or closing, asks again.
+  Future<void> _show(String status) async {
+    _wanted = true;
+    final shown = await _call<bool>('show', {'status': status}) == true;
+    // Taken away meanwhile.
+    if (!_wanted) return;
+    _shown = shown;
+    _status = shown ? status : null;
+  }
+
+  /// Takes the icon away, as GPad quits.
+  Future<void> remove() async {
+    if (!_wanted) return;
+    _wanted = false;
+    _shown = false;
+    _status = null;
+    await _call<void>('remove');
   }
 
   Future<Object?> _fromIcon(MethodCall call) async {

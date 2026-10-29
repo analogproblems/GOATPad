@@ -62,6 +62,7 @@ Tray::Tray(HWND window, flutter::BinaryMessenger* messenger)
           result->Success(flutter::EncodableValue(true));
         } else if (method == "show") {
           status_ = StatusArgument(call.arguments());
+          wanted_ = true;
           Show();
           result->Success(flutter::EncodableValue(shown_));
         } else if (method == "status") {
@@ -110,10 +111,14 @@ std::optional<LRESULT> Tray::HandleMessage(UINT message, WPARAM wparam,
     }
     return 0;
   }
-  if (message == taskbar_created_ && shown_) {
-    // Explorer restarted, and lost its icons.
+  if (message == taskbar_created_ && wanted_) {
+    // Explorer (re)started, without GPad's icon.
     shown_ = false;
     Show();
+    if (!shown_ && !IsWindowVisible(window_)) {
+      // Nothing to come back by: show the window rather than strand GPad.
+      BringBack();
+    }
     return 0;
   }
   return std::nullopt;
@@ -136,6 +141,7 @@ void Tray::Show() {
 }
 
 void Tray::Remove() {
+  wanted_ = false;
   if (!shown_) {
     return;
   }
