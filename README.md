@@ -152,6 +152,13 @@ Get GPad from [Releases](https://github.com/analogproblems/GOATPad/releases):
 
 To check a download, see [docs/releasing.md](docs/releasing.md#checking-a-download).
 
+GPad updates itself. Twice a day it looks for a newer release on GitHub
+and checks it is signed with GPad's key. The Windows zip and the AppImage
+then install it, and it starts the next time you open GPad (or click
+**Restart now**). The .deb can't update itself without admin rights, so
+GPad tells you a new version is out instead. Turn the checks off in the
+window behind the ⓘ button in the sidebar.
+
 ### Test builds
 
 Builds of every change are attached to its CI run under **Actions → CI →

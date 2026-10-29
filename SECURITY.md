@@ -31,8 +31,11 @@ release only.
   permissions, like a FAT USB stick); on Windows they live in your own
   local app data folder. Anyone who can use your unlocked account can read
   them.
+- **Updates** install only if their manifest is signed with GPad's
+  release key and each download matches it, size and SHA-256.
 - **Nothing is sent anywhere** but your encrypted notes, to the place you
-  chose. GPad has no telemetry.
+  chose, and requests for GitHub's public release files when GPad checks
+  for updates. GPad has no telemetry.
 
 The [threat model](docs/design.md#threat-model) says in more detail what
 GPad does and doesn't protect against.
@@ -44,6 +47,8 @@ GPad does and doesn't protect against.
 - Running code, or opening another program, through a note, a link, a
   paste or a sync file.
 - Making GPad crash or lose notes with a file in the sync folder or Drive.
+- Getting GPad to install an update that isn't a signed release, or an
+  older one.
 - A release download that isn't what this repository's CI built.
 
 ## Out of scope

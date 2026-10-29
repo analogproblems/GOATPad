@@ -24,3 +24,5 @@ The first release of GPad, for Windows and Linux.
 - **Downloads**: a portable Windows zip that needs no installer or admin
   rights, a .deb for Debian and Ubuntu, and an AppImage for other Linux
   systems.
+- **Updates itself** from GitHub, installing only releases signed with
+  GPad's key. The .deb tells you about new versions instead.

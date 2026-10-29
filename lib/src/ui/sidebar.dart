@@ -5,12 +5,14 @@ import '../notepad/notepad.dart';
 import '../notes/folder.dart';
 import '../notes/note.dart';
 import '../sync/sync_controller.dart';
+import '../update/updater.dart';
 import 'appearance_dialog.dart';
 import 'icons.dart';
 import 'menus.dart';
 import 'search_palette.dart';
 import 'sync_dialog.dart';
 import 'tray.dart';
+import 'updates_dialog.dart';
 
 /// Folders and notes as a tree, then the trash.
 ///
@@ -18,7 +20,13 @@ import 'tray.dart';
 /// onto the NOTES heading or the empty space below the tree to move them to
 /// the top level.
 class Sidebar extends StatefulWidget {
-  const Sidebar({super.key, required this.notepad, this.sync, this.tray});
+  const Sidebar({
+    super.key,
+    required this.notepad,
+    this.sync,
+    this.tray,
+    this.updater,
+  });
 
   final Notepad notepad;
 
@@ -28,6 +36,9 @@ class Sidebar extends StatefulWidget {
 
   /// The tray icon, whose setting is in the sync window.
   final Tray? tray;
+
+  /// GPad's updates, shown with its version.
+  final Updater? updater;
 
   @override
   State<Sidebar> createState() => _SidebarState();
@@ -77,6 +88,12 @@ class _SidebarState extends State<Sidebar> {
                     onChanged: (a) => notepad.appearance.value = a,
                   ),
                 ),
+                if (widget.updater case final updater?)
+                  IconButton(
+                    tooltip: 'About GPad and updates',
+                    icon: const Icon(Icons.info_outline, size: 18),
+                    onPressed: () => showUpdatesDialog(context, updater),
+                  ),
               ],
             ),
           ),
