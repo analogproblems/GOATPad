@@ -262,7 +262,7 @@ packages:
     source: hosted
     version: "2.2.0"
   html:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: html
       sha256: "43b67b8f43321ab066817dfac5619596c98bb1b61624e77203bb4351785f9699"
@@ -446,7 +446,7 @@ packages:
     source: hosted
     version: "2.2.1"
   quill_native_bridge:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: quill_native_bridge
       sha256: "76a16512e398e84216f3f659f7cb18a89ec1e141ea908e954652b4ce6cf15b18"

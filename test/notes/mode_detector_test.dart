@@ -111,6 +111,21 @@ jobs:
         const ModeGuess.code('yaml'),
       );
     });
+
+    test('a diff', () {
+      expect(
+        detector.detect('''
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,3 +1,3 @@
+ void main() {
+-  print('hello');
++  print('hello, GPad');
+ }
+'''),
+        const ModeGuess.code('diff'),
+      );
+    });
   });
 
   group('rich', () {
@@ -126,6 +141,17 @@ jobs:
       );
     });
 
+    test('a list under a heading line is a list, not a diff', () {
+      expect(
+        detector.detect('Grocery list\n- oat milk\n- crème fraîche\n- lemons'),
+        const ModeGuess.rich(),
+      );
+      expect(
+        detector.detect('Pros and cons\n+ cheap\n+ fast\n- noisy'),
+        const ModeGuess.rich(),
+      );
+    });
+
     test('Markdown with a link and a quote', () {
       expect(
         detector.detect(
@@ -135,10 +161,30 @@ jobs:
       );
     });
 
-    test('HTML on the clipboard always means rich', () {
+    test('formatting on the clipboard means rich', () {
       expect(
-        detector.detect('Plain words', clipboardHadHtml: true),
+        detector.detect('Plain words', clipboardHadFormatting: true),
         const ModeGuess.rich(),
+      );
+      expect(
+        detector.detect('def f():\n    return 1', clipboardHadFormatting: true),
+        const ModeGuess.rich(),
+      );
+      // An image copied on its own has no plain text.
+      expect(
+        detector.detect('', clipboardHadFormatting: true),
+        const ModeGuess.rich(),
+      );
+    });
+
+    test('but JSON and XML stay code whatever the clipboard says', () {
+      expect(
+        detector.detect('{"a": 1}', clipboardHadFormatting: true),
+        const ModeGuess.code('json'),
+      );
+      expect(
+        detector.detect('<a><b/></a>', clipboardHadFormatting: true),
+        const ModeGuess.code('xml'),
       );
     });
   });

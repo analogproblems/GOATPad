@@ -7,7 +7,7 @@ Everything you type is saved as you go. There is no Save button, and closing GPa
 ## Try this
 
 - Press **Ctrl+N** and paste something: code, JSON, an email or a Markdown list. GPad picks Rich, Code or Plain and suggests a name you can change.
-- **Ctrl+Shift+V** pastes the clipboard straight into a new note.
+- **Ctrl+Shift+V** pastes the clipboard straight into a new note. Copy from a web page or Word and the headings, lists, links and tables come too.
 - **Ctrl+W** closes a tab. The note stays in the sidebar, so click it to reopen it.
 - **Ctrl+Tab** and **Ctrl+Shift+Tab** move between tabs.
 - **Ctrl+P** searches every note as you type, closed and trashed ones too.

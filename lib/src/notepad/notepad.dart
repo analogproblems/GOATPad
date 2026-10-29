@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 import '../notes/folder.dart';
+import '../notes/html_markdown.dart';
 import '../notes/mode_detector.dart';
 import '../notes/name_suggester.dart';
 import '../notes/note.dart';
@@ -255,23 +256,62 @@ class Notepad extends ChangeNotifier {
     );
   }
 
-  /// A new note holding [text], with its mode and name picked from it, in
-  /// the same folder as the selected tab. Returns null if [text] is blank.
-  Note? pasteAsNewNote(String text) {
-    if (text.trim().isEmpty) return null;
+  /// A new note holding the clipboard, with its mode and name picked from
+  /// it, in the same folder as the selected tab. [html] is the clipboard's
+  /// HTML, if any: when it carries formatting the note is Rich and holds it
+  /// as Markdown. Returns null if there is nothing to paste.
+  Note? pasteAsNewNote(String text, {String? html}) {
+    final (guess, body, _) = _fromClipboard(text, html);
+    if (body.trim().isEmpty) return null;
     final now = _clock();
-    final guess = _detector.detect(text);
     return _add(
       Note(
         id: newId(),
         folderId: _currentFolder?.id,
-        title: suggestName(text, guess, now),
-        text: text,
+        title: suggestName(body, guess, now),
+        text: body,
         guess: guess,
         createdAt: now,
         updatedAt: now,
       ),
     );
+  }
+
+  /// The first paste into [note], a new empty note, when the clipboard has
+  /// HTML: if it carries formatting, the note becomes Rich and holds it as
+  /// Markdown. Returns false, changing nothing, when the paste should go in
+  /// as plain text instead (the editor then pastes it, and [editText] picks
+  /// the mode).
+  bool pasteFormatted(Note note, {required String text, required String html}) {
+    if (!note.awaitingFirstPaste || note.text.trim().isNotEmpty) return false;
+    final (guess, body, fromHtml) = _fromClipboard(text, html);
+    if (!fromHtml) return false;
+    note
+      ..text = body
+      ..guess = guess
+      ..awaitingFirstPaste = false
+      ..updatedAt = _clock();
+    if (!note.titleEdited) {
+      note.title = suggestName(body, guess, note.updatedAt);
+      note.titleVersion++;
+    }
+    _saveNow(note);
+    notifyListeners();
+    return true;
+  }
+
+  /// The mode and text for a paste, and whether the text is the HTML's
+  /// Markdown rather than the plain text.
+  (ModeGuess, String, bool) _fromClipboard(String text, String? html) {
+    final markdown = html == null ? null : markdownFromHtml(html);
+    final guess = _detector.detect(
+      text,
+      clipboardHadFormatting: markdown != null,
+    );
+    if (guess.mode == NoteMode.rich && markdown != null) {
+      return (guess, markdown, true);
+    }
+    return (guess, text, false);
   }
 
   /// Closes [note]'s tab. The note stays, marked closed.

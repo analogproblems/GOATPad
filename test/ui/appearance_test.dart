@@ -52,7 +52,7 @@ void main() {
       offset: 5,
     );
     await tester.pump();
-    expect(find.textContaining('16 characters'), findsOneWidget);
+    expect(find.text('1 line · 16 characters'), findsOneWidget);
 
     await _switchToSlateDarkColorblindSafe(tester);
 
