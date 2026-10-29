@@ -269,7 +269,7 @@ The choices are saved with the other settings.
   language, status open/closed/trashed, tab order, timestamps), `folders`
   (random id, parent, name, whether it is expanded in the sidebar and folded
   in the tab strip) and `settings` (theme, selected tab). The version lives
-  in `PRAGMA user_version` (2 since folders); older databases are upgraded
+  in `PRAGMA user_version` (3 since search); older databases are upgraded
   in place and a database from a newer GPad is refused rather than changed.
   Random ids mean notes and folders made on two machines never clash once
   sync arrives. A note or folder whose folder is missing loads at the top
