@@ -10,7 +10,7 @@ enum NoteMode {
   final String label;
 }
 
-/// The mode GOATPad picked for some text, plus the language for [NoteMode.code].
+/// The mode GPad picked for some text, plus the language for [NoteMode.code].
 class ModeGuess {
   const ModeGuess(this.mode, [this.language]);
 

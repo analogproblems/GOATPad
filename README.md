@@ -1,8 +1,9 @@
-# GOATPad
+# GPad
 
-The greatest notepad of all time: a fast, warm, Sublime-style notepad that
-keeps everything you paste and syncs it between your computers, end-to-end
-encrypted, through storage you already have.
+GPad (built in this GOATPad repository: the greatest notepad of all time) is a
+fast, Sublime-style notepad that keeps everything you paste and syncs it
+between your computers, end-to-end encrypted, through storage you already
+have.
 
 Paste something on your Windows work machine, close the window, and find it
 waiting in a tab on your Linux machine at home.
@@ -18,7 +19,7 @@ Nothing is saved yet.
 | Step | What it delivers | State |
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | In progress |
-| 2. Local notepad | Autosave, session restore, folders and tab groups, search, themes | Next |
+| 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | Next |
 | 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
 | 4. Release | Packaging and GitHub Releases | Planned |
 
@@ -32,7 +33,9 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 - **Nothing lost.** No save prompts. Closing a tab keeps the note, marked
   closed, so tabs stay tidy without throwing anything away.
 - **Private sync.** Notes are encrypted on your device before they reach
-  Google Drive or your sync folder. There is no GOATPad server.
+  Google Drive or your sync folder. There is no GPad server.
+- **Your look.** Warm, Classic or Slate themes, each in light and dark, and
+  code colors you can switch to a colorblind-safe or high-contrast scheme.
 
 ## Try the editor lab
 
@@ -41,6 +44,8 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 2. Press Ctrl+N and paste code, JSON, an email or a Markdown list. Watch the
    mode and the suggested name change.
 3. Close a tab with Ctrl+W and reopen it from the sidebar.
+4. Open **Appearance** (the palette button) to try the themes and code
+   colors.
 
 Windows and Linux builds from CI are attached to each run under
 **Actions → CI → Artifacts**.

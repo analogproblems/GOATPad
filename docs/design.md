@@ -1,22 +1,26 @@
-# GOATPad design note
+# GPad design note
 
-GOATPad is a free, open-source notepad that feels like Sublime Text and syncs
+GPad is a free, open-source notepad that feels like Sublime Text and syncs
 between your computers, end-to-end encrypted, through storage you already
 have. The core moment: paste something on a Windows work machine, close the
 window, and find it waiting in a tab on a Linux machine at home.
+
+The app is called GPad; the repository and Dart package keep the name
+GOATPad (`goatpad`).
 
 This note records the decisions behind v1 and the reasons for them. It is
 short on purpose; change it when a decision changes.
 
 ## Goals
 
-- A fast, clean editor with syntax highlighting and warm light and dark themes.
+- A fast, clean editor with syntax highlighting, and themes from warm to
+  classic to modern, each in light and dark.
 - Nothing is ever lost: every keystroke is kept, tabs come back on reopen, and
   nothing asks "save?".
 - Each note picks how to show itself (Rich, Code or Plain) from what you paste.
 - Folder sidebar, with tab groups that mirror folders.
 - Full-text search across all notes.
-- Free sync, encrypted before it leaves the device, with no GOATPad server.
+- Free sync, encrypted before it leaves the device, with no GPad server.
 - Windows and Linux in v1. macOS and mobile later.
 
 ## Stack
@@ -73,7 +77,7 @@ edited:
 
 Keeping text as the source of truth means search, sync, diffing and future
 local AI features all work on the same thing, and nothing is locked into a
-GOATPad-only format. Switching a Rich note to Code shows its Markdown.
+GPad-only format. Switching a Rich note to Code shows its Markdown.
 
 `ModeDetector` (`lib/src/notes/mode_detector.dart`) picks a mode on the first
 paste into a new note:
@@ -111,6 +115,28 @@ can take them over later without a rewrite.
   safety net.
 - Tab groups mirror folders in v1. Ad hoc groups are an open question.
 
+## Themes and code colors
+
+The Appearance dialog has three independent choices:
+
+| Choice | Options |
+| --- | --- |
+| Theme | Warm (paper and ink, amber accent; the default), Classic (plain white or black, like a traditional editor), Slate (cool blue-grey, modern and neutral) |
+| Light or dark | System, Light, Dark |
+| Code colors | Match theme (Kimbie, VS or GitHub to suit the theme), Colorblind-safe, High contrast (the a11y scheme) |
+
+Colorblind-safe code colors (`lib/src/code_colors.dart`) use Okabe-Ito hues
+(blue, bluish green, orange, vermillion, reddish purple), which avoid the
+red/green pairs that most color blindness confuses. Each is tuned to keep at
+least 4.5:1 contrast on every theme's editor background, which a test checks.
+Keywords are bold and comments italic, so token kinds differ by more than
+color.
+
+Code colors only apply to Code notes. Rich notes use the theme's text color,
+and Quill's color buttons are hidden for now.
+
+The choice is not saved yet; step 2 stores it with the other settings.
+
 ## Local storage (step 2)
 
 - Notes, folders and tab state live in a local SQLite database, saved a short
@@ -123,7 +149,7 @@ can take them over later without a rewrite.
 Sync goes through a small `SyncBackend` interface with two backends in v1:
 
 - **Google Drive, direct.** Linux has no official Drive desktop app, so
-  GOATPad talks to the Drive API itself. It asks only for the `drive.file`
+  GPad talks to the Drive API itself. It asks only for the `drive.file`
   scope, which lets it see files it created and nothing else. Full Drive
   access is a restricted scope that needs a paid Google security assessment
   for public apps. Advanced users can supply their own Google OAuth client ID.
@@ -162,16 +188,16 @@ winner silently.
 
 ## Threat model
 
-GOATPad protects against:
+GPad protects against:
 
 - The storage provider, or anyone who gets into that account, reading notes.
 - Someone with the synced files tampering with them undetected (authenticated
   encryption rejects modified files).
 - Losing work to a crash, a closed window or an accidental tab close.
 
-GOATPad does not protect against:
+GPad does not protect against:
 
-- Malware or another user with access to an unlocked machine running GOATPad.
+- Malware or another user with access to an unlocked machine running GPad.
 - Someone who knows the passphrase or holds the recovery key.
 - An employer's policy on putting work content in personal cloud storage.
   Check before relying on sync from a work machine.
@@ -179,7 +205,7 @@ GOATPad does not protect against:
 ## Release (step 4)
 
 - Windows: a portable zip that runs without admin rights, then an installer.
-  The zip carries the Visual C++ runtime DLLs next to `goatpad.exe`, since
+  The zip carries the Visual C++ runtime DLLs next to `gpad.exe`, since
   many machines (including the first one we tried) don't have them.
   Unsigned builds show a SmartScreen warning on first run; code signing costs
   money and can come later.

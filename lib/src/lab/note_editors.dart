@@ -65,7 +65,7 @@ class _CodeNoteEditorState extends State<CodeNoteEditor> {
             ? null
             : CodeHighlightTheme(
                 languages: {language!: CodeHighlightThemeMode(mode: grammar)},
-                theme: GoatTheme.codeTheme(Theme.of(context).brightness),
+                theme: Theme.of(context).extension<CodeTheme>()!.styles,
               ),
       ),
       indicatorBuilder: isCode
@@ -199,7 +199,7 @@ class _EmbedPlaceholderBuilder extends quill.EmbedBuilder {
   static const _markdownQuillRuleType = 'divider';
 
   @override
-  String get key => 'goatpad-placeholder';
+  String get key => 'gpad-placeholder';
 
   @override
   Widget build(BuildContext context, quill.EmbedContext embedContext) {

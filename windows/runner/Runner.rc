@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "io.github.analogproblems" "\0"
-            VALUE "FileDescription", "goatpad" "\0"
+            VALUE "FileDescription", "GPad" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "goatpad" "\0"
+            VALUE "InternalName", "gpad" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 io.github.analogproblems. All rights reserved." "\0"
-            VALUE "OriginalFilename", "goatpad.exe" "\0"
-            VALUE "ProductName", "goatpad" "\0"
+            VALUE "OriginalFilename", "gpad.exe" "\0"
+            VALUE "ProductName", "GPad" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

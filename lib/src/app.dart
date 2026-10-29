@@ -5,33 +5,25 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'lab/editor_lab.dart';
 import 'theme.dart';
 
-class GoatPadApp extends StatefulWidget {
-  const GoatPadApp({super.key});
+class GPadApp extends StatefulWidget {
+  const GPadApp({super.key});
 
   @override
-  State<GoatPadApp> createState() => _GoatPadAppState();
+  State<GPadApp> createState() => _GPadAppState();
 }
 
-class _GoatPadAppState extends State<GoatPadApp> {
-  ThemeMode _themeMode = ThemeMode.system;
-
-  void _toggleTheme() {
-    final platformDark =
-        MediaQuery.platformBrightnessOf(context) == Brightness.dark;
-    final isDark =
-        _themeMode == ThemeMode.dark ||
-        (_themeMode == ThemeMode.system && platformDark);
-    setState(() => _themeMode = isDark ? ThemeMode.light : ThemeMode.dark);
-  }
+class _GPadAppState extends State<GPadApp> {
+  // Not saved yet; step 2 stores it with the rest of the settings.
+  Appearance _appearance = const Appearance();
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'GOATPad',
+      title: 'GPad',
       debugShowCheckedModeBanner: false,
-      theme: GoatTheme.light(),
-      darkTheme: GoatTheme.dark(),
-      themeMode: _themeMode,
+      theme: GoatTheme.build(_appearance, Brightness.light),
+      darkTheme: GoatTheme.build(_appearance, Brightness.dark),
+      themeMode: _appearance.mode,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
@@ -39,7 +31,10 @@ class _GoatPadAppState extends State<GoatPadApp> {
         FlutterQuillLocalizations.delegate,
       ],
       supportedLocales: const [Locale('en')],
-      home: EditorLab(onToggleTheme: _toggleTheme),
+      home: EditorLab(
+        appearance: _appearance,
+        onAppearanceChanged: (a) => setState(() => _appearance = a),
+      ),
     );
   }
 }

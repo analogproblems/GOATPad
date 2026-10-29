@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../notes/mode_detector.dart';
 import '../notes/name_suggester.dart';
 import '../notes/note_mode.dart';
+import '../theme.dart';
+import 'appearance_dialog.dart';
 import 'note_editors.dart';
 
 /// A note held in memory. Step 2 replaces this with real storage.
@@ -23,7 +25,7 @@ class LabNote {
   bool closed = false;
   bool titleEdited = false;
 
-  /// Bumped when GOATPad renames the note, so the title field reloads.
+  /// Bumped when GPad renames the note, so the title field reloads.
   int titleVersion = 0;
 
   /// A new, empty note picks its mode and name from the first paste.
@@ -33,9 +35,14 @@ class LabNote {
 /// Step 1 prototype: tabs, smart modes and inline naming, with nothing saved
 /// yet. It settled the rich editor: Quill.
 class EditorLab extends StatefulWidget {
-  const EditorLab({super.key, required this.onToggleTheme});
+  const EditorLab({
+    super.key,
+    required this.appearance,
+    required this.onAppearanceChanged,
+  });
 
-  final VoidCallback onToggleTheme;
+  final Appearance appearance;
+  final ValueChanged<Appearance> onAppearanceChanged;
 
   @override
   State<EditorLab> createState() => _EditorLabState();
@@ -213,12 +220,16 @@ class _EditorLabState extends State<EditorLab> {
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
             child: Row(
               children: [
-                Text('GOATPad', style: theme.textTheme.titleMedium),
+                Text('GPad', style: theme.textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
-                  tooltip: 'Light or dark',
-                  icon: const Icon(Icons.brightness_6_outlined, size: 18),
-                  onPressed: widget.onToggleTheme,
+                  tooltip: 'Appearance',
+                  icon: const Icon(Icons.palette_outlined, size: 18),
+                  onPressed: () => showAppearanceDialog(
+                    context,
+                    appearance: widget.appearance,
+                    onChanged: widget.onAppearanceChanged,
+                  ),
                 ),
               ],
             ),
