@@ -1,6 +1,7 @@
-import 'dart:ui' show AppExitResponse;
+import 'dart:ui' show AppExitResponse, AppExitType;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
@@ -8,6 +9,7 @@ import 'notepad/notepad.dart';
 import 'sync/sync_controller.dart';
 import 'theme.dart';
 import 'ui/notepad_screen.dart';
+import 'ui/tray.dart';
 
 const _localizationsDelegates = [
   GlobalMaterialLocalizations.delegate,
@@ -17,10 +19,24 @@ const _localizationsDelegates = [
 ];
 
 class GPadApp extends StatefulWidget {
-  const GPadApp({super.key, required this.notepad, this.sync});
+  const GPadApp({
+    super.key,
+    required this.notepad,
+    this.sync,
+    this.tray,
+    this.exitForGood = _exitForGood,
+  });
 
   final Notepad notepad;
   final SyncController? sync;
+  final Tray? tray;
+
+  /// Quits without asking, once Quit in the tray icon's menu has saved and
+  /// uploaded everything. Tests replace it.
+  final Future<void> Function() exitForGood;
+
+  static Future<void> _exitForGood() =>
+      ServicesBinding.instance.exitApplication(AppExitType.required);
 
   @override
   State<GPadApp> createState() => _GPadAppState();
@@ -42,14 +58,42 @@ class _GPadAppState extends State<GPadApp> {
   /// Quits once everything is saved, and uploaded if sync is on (giving up
   /// after a few seconds; it goes up next time). If saving fails, asks
   /// before quitting and losing the latest changes.
+  ///
+  /// With the tray on, closing the window only hides it: GPad goes on
+  /// saving and syncing, and quits from the tray icon's menu.
   Future<AppExitResponse> _exitRequested() async {
+    final tray = widget.tray;
+    if (tray != null && tray.keepsRunning) {
+      // What is typed so far goes up now, not only once GPad quits.
+      widget.notepad.flush();
+      widget.sync?.syncNow();
+      await tray.hideWindow();
+      return AppExitResponse.cancel;
+    }
+    return await _mayQuit() ? AppExitResponse.exit : AppExitResponse.cancel;
+  }
+
+  /// Quit, chosen in the tray icon's menu.
+  Future<void> _quitFromTray() async {
+    if (!widget.notepad.flush()) {
+      // Ask in the window, which may be hidden.
+      await widget.tray?.showWindow();
+    }
+    if (!await _mayQuit()) return;
+    await widget.tray?.remove();
+    await widget.exitForGood();
+  }
+
+  /// Saves and uploads what is waiting, and returns whether GPad may quit:
+  /// when everything is saved, or the person says to quit anyway.
+  Future<bool> _mayQuit() async {
     final notepad = widget.notepad;
     final context = _navigator.currentContext;
     if (notepad.flush()) {
       await widget.sync?.finish();
-      return AppExitResponse.exit;
+      return true;
     }
-    if (context == null) return AppExitResponse.exit;
+    if (context == null) return true;
     final quit = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -72,18 +116,20 @@ class _GPadAppState extends State<GPadApp> {
         ],
       ),
     );
-    return quit == true ? AppExitResponse.exit : AppExitResponse.cancel;
+    return quit == true;
   }
 
   @override
   void initState() {
     super.initState();
     _lifecycle;
+    widget.tray?.onQuit = _quitFromTray;
   }
 
   @override
   void dispose() {
     _lifecycle.dispose();
+    if (widget.tray?.onQuit == _quitFromTray) widget.tray?.onQuit = null;
     super.dispose();
   }
 
@@ -100,7 +146,11 @@ class _GPadAppState extends State<GPadApp> {
         themeMode: appearance.mode,
         localizationsDelegates: _localizationsDelegates,
         supportedLocales: const [Locale('en')],
-        home: NotepadScreen(notepad: widget.notepad, sync: widget.sync),
+        home: NotepadScreen(
+          notepad: widget.notepad,
+          sync: widget.sync,
+          tray: widget.tray,
+        ),
       ),
     );
   }

@@ -9,14 +9,19 @@ import '../sync/google_auth.dart';
 import '../sync/sync_backend.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_engine.dart' show SyncException;
+import 'tray.dart';
 
-/// Sets sync up, unlocks it, or shows how it's going.
-Future<void> showSyncDialog(BuildContext context, SyncController sync) =>
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => _SyncDialog(sync),
-    );
+/// Sets sync up, unlocks it, or shows how it's going, and has the setting
+/// for [tray].
+Future<void> showSyncDialog(
+  BuildContext context,
+  SyncController sync, {
+  Tray? tray,
+}) => showDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (context) => _SyncDialog(sync, tray),
+);
 
 /// A line for the sidebar saying how sync is going.
 ({IconData icon, String label}) syncSummary(
@@ -49,9 +54,10 @@ enum _Page {
 enum _Where { drive, folder }
 
 class _SyncDialog extends StatefulWidget {
-  const _SyncDialog(this.sync);
+  const _SyncDialog(this.sync, this.tray);
 
   final SyncController sync;
+  final Tray? tray;
 
   @override
   State<_SyncDialog> createState() => _SyncDialogState();
@@ -427,7 +433,7 @@ class _SyncDialogState extends State<_SyncDialog> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: sync,
+      listenable: Listenable.merge([sync, ?widget.tray]),
       builder: (context, _) => AlertDialog(
         title: Text(switch (_page) {
           _Page.choose => 'Sync your notes',
@@ -958,6 +964,7 @@ class _SyncDialogState extends State<_SyncDialog> {
         const SizedBox(height: 12),
         Text(changed),
       ],
+      if (widget.tray case final tray?) _trayBox(context, tray),
       if (sync.unreadable.isNotEmpty) ...[
         const SizedBox(height: 8),
         Text(
@@ -972,6 +979,27 @@ class _SyncDialogState extends State<_SyncDialog> {
         ),
       ],
     ];
+  }
+
+  Widget _trayBox(BuildContext context, Tray tray) {
+    final available = tray.available;
+    return CheckboxListTile(
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      value: tray.enabled && available == true,
+      onChanged: available == true
+          ? (value) => tray.setEnabled(value ?? false)
+          : null,
+      title: const Text('Keep syncing in the tray when the window is closed'),
+      subtitle: Text(
+        available == false
+            ? 'This desktop has no system tray GPad can use. On GNOME, the '
+                  'AppIndicator extension adds one.'
+            : 'Closing the window leaves GPad in the system tray, picking up '
+                  'changes from your other computers. Quit from the tray '
+                  'icon\'s menu.',
+      ),
+    );
   }
 
   Widget _fact(BuildContext context, String label, String value) {
