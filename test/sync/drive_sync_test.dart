@@ -13,6 +13,7 @@ import 'package:goatpad/src/sync/sync_record.dart';
 import 'package:goatpad/src/sync/vault.dart';
 
 import 'fake_drive.dart';
+import 'held_keychain.dart';
 
 const passphrase = 'purple tiger lamp river';
 
@@ -118,6 +119,13 @@ void main() {
       held.complete();
       await release;
     };
+  }
+
+  Future<void> until(bool Function() done) async {
+    for (var i = 0; i < 200 && !done(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(done(), isTrue);
   }
 
   /// Lets the requests under way end, and returns any that follow.
@@ -464,6 +472,60 @@ void main() {
     }
   });
 
+  test('a new sign-in is used only once it is saved', () async {
+    final keychain = HeldKeychain();
+    final sync = await setUpFirst(notepadWith('mine'), keychain: keychain);
+    drive.revokeAll();
+    await sync.syncNow();
+    expect(sync.status, SyncStatus.signedOut);
+    sync.notepad.editText(sync.notepad.newNote(), 'written meanwhile');
+    sync.notepad.flush();
+
+    keychain.holding = true;
+    var saving = false;
+    final signingIn = sync.signInAgain(saving: () => saving = true);
+    await until(() => keychain.held.isNotEmpty);
+    // Told first, so the dialog takes Cancel away.
+    expect(saving, isTrue);
+    // Not used while the keychain waits, say to be unlocked.
+    drive.requests.clear();
+    await sync.syncNow();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(drive.requests, isEmpty);
+    expect(sync.status, SyncStatus.signedOut);
+
+    keychain.holding = false;
+    keychain.held.single.complete();
+    await signingIn;
+    await settle(sync);
+    expect(sync.status, SyncStatus.synced);
+    expect(
+      keychain.secrets.keys.where((k) => k.startsWith('sync-google')),
+      hasLength(1),
+    );
+  });
+
+  test('turning off while a sign-in is saved leaves none behind', () async {
+    final keychain = HeldKeychain();
+    final sync = await setUpFirst(notepadWith('mine'), keychain: keychain);
+    drive.revokeAll();
+    await sync.syncNow();
+    expect(sync.status, SyncStatus.signedOut);
+
+    keychain.holding = true;
+    final signingIn = sync.signInAgain();
+    await until(() => keychain.held.isNotEmpty);
+    await sync.turnOff();
+    keychain.holding = false;
+    keychain.held.single.complete();
+    await signingIn;
+    expect(keychain.secrets, isEmpty);
+    expect(sync.status, SyncStatus.off);
+    drive.requests.clear();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(drive.requests, isEmpty);
+  });
+
   test('joining twice at once, as with Enter pressed twice, joins', () async {
     final work = await setUpFirst(notepadWith('at work'));
     final home = notepadWith('at home');
@@ -479,9 +541,7 @@ void main() {
     );
     final first = join();
     final second = join().then<Object?>((ok) => ok, onError: (Object e) => e);
-    for (var i = 0; i < 100 && crypto.held.isEmpty; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+    await until(() => crypto.held.isNotEmpty);
     crypto.held.first.complete();
     expect(await first, isTrue);
     for (final unlock in crypto.held.skip(1)) {

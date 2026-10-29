@@ -80,6 +80,9 @@ class _SyncDialogState extends State<_SyncDialog> {
   /// waiting.
   Uri? _signInUrl;
   Completer<void>? _cancelSignIn;
+
+  /// Whether GPad is saving a sign-in, which can't be cancelled.
+  bool _savingSignIn = false;
   bool _useRecoveryKey = false;
   bool _remember = true;
   bool? _keychain;
@@ -166,21 +169,37 @@ class _SyncDialogState extends State<_SyncDialog> {
   }
 
   /// Signs in to Google in the browser, showing the link meanwhile, and
-  /// returns what [signIn] did, or null if it was cancelled.
+  /// returns what [signIn] did, or null if it was cancelled. Once [signIn]
+  /// says it is saving the sign-in, it can't be cancelled any more, and
+  /// Cancel goes.
   Future<T?> _signingIn<T>(
-    Future<T> Function(void Function(Uri url) showUrl, Future<void> cancel)
+    Future<T> Function(
+      void Function(Uri url) showUrl,
+      Future<void> cancel,
+      void Function() saving,
+    )
     signIn,
   ) async {
     final cancel = _cancelSignIn = Completer<void>();
     try {
-      return await signIn((url) {
-        if (mounted) setState(() => _signInUrl = url);
-      }, cancel.future);
+      return await signIn(
+        (url) {
+          if (mounted) setState(() => _signInUrl = url);
+        },
+        cancel.future,
+        () {
+          _cancelSignIn = null;
+          _signInUrl = null;
+          _savingSignIn = true;
+          if (mounted) setState(() {});
+        },
+      );
     } on GoogleAuthException {
       if (cancel.isCompleted) return null;
       rethrow;
     } finally {
       _cancelSignIn = null;
+      _savingSignIn = false;
       if (mounted) setState(() => _signInUrl = null);
     }
   }
@@ -204,7 +223,7 @@ class _SyncDialogState extends State<_SyncDialog> {
       own = GoogleClient(id: id, secret: secret);
     }
     final checked = await _signingIn(
-      (showUrl, cancel) =>
+      (showUrl, cancel, _) =>
           sync.signInToDrive(ownClient: own, showUrl: showUrl, cancel: cancel),
     );
     if (checked == null || !mounted) return;
@@ -213,8 +232,8 @@ class _SyncDialogState extends State<_SyncDialog> {
   });
 
   Future<void> _signInAgain() => _work(() async {
-    final done = await _signingIn((showUrl, cancel) async {
-      await sync.signInAgain(showUrl: showUrl, cancel: cancel);
+    final done = await _signingIn((showUrl, cancel, saving) async {
+      await sync.signInAgain(showUrl: showUrl, cancel: cancel, saving: saving);
       return true;
     });
     if (done == true && mounted) Navigator.of(context).pop();
@@ -541,8 +560,18 @@ class _SyncDialogState extends State<_SyncDialog> {
   ];
 
   /// While GPad waits for the browser: what to do there, and the link, in
-  /// case the browser didn't open.
+  /// case the browser didn't open. Then, while GPad saves the sign-in, that
+  /// it does.
   List<Widget> _waitingForBrowser(BuildContext context) {
+    if (_savingSignIn) {
+      return const [
+        SizedBox(height: 12),
+        Text(
+          'Saving the sign-in in this computer\'s keychain, which may ask you '
+          'to unlock it.',
+        ),
+      ];
+    }
     final url = _signInUrl;
     if (url == null) return const [];
     return [

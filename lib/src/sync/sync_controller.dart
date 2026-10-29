@@ -331,9 +331,15 @@ class SyncController extends ChangeNotifier {
   }
 
   /// Signs in to Google again, after it signed GPad out.
+  ///
+  /// [cancel] stops it until the account is checked. Then [saving] runs:
+  /// from there signing in can't be cancelled, as GPad saves the sign-in
+  /// in the keychain, which may wait for someone to unlock it, and only
+  /// then uses it.
   Future<void> signInAgain({
     void Function(Uri url)? showUrl,
     Future<void>? cancel,
+    void Function()? saving,
   }) async {
     final config = _config;
     if (config == null || config.place is! DrivePlace) return;
@@ -350,8 +356,17 @@ class SyncController extends ChangeNotifier {
       );
     }
     if (_config != config) return;
-    _google = auth;
+    saving?.call();
     await _rememberGoogle(config.vault.id, auth);
+    if (_config != config) {
+      // Turned off, or set up again, while saving: unless that's the same
+      // vault, whose own sign-in this may have replaced, nothing uses it.
+      if (_config?.vault.id != config.vault.id) {
+        await _forgetSaved(config.vault.id);
+      }
+      return;
+    }
+    _google = auth;
     syncNow();
   }
 
@@ -614,8 +629,12 @@ class SyncController extends ChangeNotifier {
   Future<void> _forgetGoogle(SyncConfig config, GoogleAuth? auth) async {
     if (auth == null || _google != auth) return;
     _google = null;
+    await _forgetSaved(config.vault.id);
+  }
+
+  Future<void> _forgetSaved(String vaultId) async {
     try {
-      await keychain.delete(_googleKeyName(config.vault.id));
+      await keychain.delete(_googleKeyName(vaultId));
     } on Object {
       // Nothing was remembered.
     }

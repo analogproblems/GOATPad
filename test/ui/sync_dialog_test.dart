@@ -12,6 +12,7 @@ import 'package:goatpad/src/ui/sidebar.dart';
 import 'package:path/path.dart' as p;
 
 import '../sync/fake_drive.dart';
+import '../sync/held_keychain.dart';
 
 const _passphrase = 'purple tiger lamp river';
 
@@ -253,6 +254,46 @@ void main() {
     await tester.pump();
     expect(find.text('Sign in to Google'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, 'Sign in with Google'));
+    await _waitFor(tester, _inSidebar('Synced'));
+    expect(find.text('Sign in to Google'), findsNothing);
+    await _finish(tester, sync);
+  });
+
+  testWidgets('once a new sign-in is being saved, Cancel goes', (tester) async {
+    final drive = FakeDrive();
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final keychain = HeldKeychain();
+    final sync = _controller(notepad, drive: drive, keychain: keychain);
+    await tester.runAsync(() async {
+      final checked = await sync.signInToDrive();
+      await sync.create(
+        place: checked.place,
+        passphrase: _passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await sync.finish();
+      drive.revokeAll();
+      await sync.syncNow();
+    });
+    expect(sync.status, SyncStatus.signedOut);
+    await _pumpApp(tester, notepad, sync);
+
+    await tester.tap(_inSidebar('Sync paused: sign in'));
+    await tester.pump();
+    keychain.holding = true;
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in with Google'));
+    await _waitFor(tester, find.textContaining('Saving the sign-in'));
+    expect(find.text('Cancel'), findsNothing);
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Later'))
+          .onPressed,
+      isNull,
+    );
+
+    keychain.holding = false;
+    keychain.held.single.complete();
     await _waitFor(tester, _inSidebar('Synced'));
     expect(find.text('Sign in to Google'), findsNothing);
     await _finish(tester, sync);
