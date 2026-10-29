@@ -10,6 +10,7 @@ import 'sync/sync_controller.dart';
 import 'theme.dart';
 import 'ui/notepad_screen.dart';
 import 'ui/tray.dart';
+import 'update/updater.dart';
 
 const _localizationsDelegates = [
   GlobalMaterialLocalizations.delegate,
@@ -24,12 +25,14 @@ class GPadApp extends StatefulWidget {
     required this.notepad,
     this.sync,
     this.tray,
+    this.updater,
     this.exitForGood = _exitForGood,
   });
 
   final Notepad notepad;
   final SyncController? sync;
   final Tray? tray;
+  final Updater? updater;
 
   /// Quits without asking, once Quit in the tray icon's menu has saved and
   /// uploaded everything. Tests replace it.
@@ -70,7 +73,9 @@ class _GPadAppState extends State<GPadApp> {
       await tray.hideWindow();
       return AppExitResponse.cancel;
     }
-    return await _mayQuit() ? AppExitResponse.exit : AppExitResponse.cancel;
+    if (!await _mayQuit()) return AppExitResponse.cancel;
+    await widget.updater?.finishAfterExit();
+    return AppExitResponse.exit;
   }
 
   /// Quit, chosen in the tray icon's menu (once, if chosen twice).
@@ -83,6 +88,23 @@ class _GPadAppState extends State<GPadApp> {
         await widget.tray?.showWindow();
       }
       if (!await _mayQuit()) return;
+      await widget.updater?.finishAfterExit();
+      await widget.tray?.remove();
+      await widget.exitForGood();
+    } finally {
+      _quitting = false;
+    }
+  }
+
+  /// Restart now, for an update that is ready: quits as Quit in the tray
+  /// icon's menu does, and has the new version start once GPad is gone.
+  Future<void> _restartForUpdate() async {
+    if (_quitting) return;
+    _quitting = true;
+    try {
+      if (!await _mayQuit()) return;
+      // If the new version won't start, GPad stays open and says so.
+      if (!(await widget.updater?.launchAfterExit() ?? false)) return;
       await widget.tray?.remove();
       await widget.exitForGood();
     } finally {
@@ -132,12 +154,16 @@ class _GPadAppState extends State<GPadApp> {
     super.initState();
     _lifecycle;
     widget.tray?.onQuit = _quitFromTray;
+    widget.updater?.onRestart = _restartForUpdate;
   }
 
   @override
   void dispose() {
     _lifecycle.dispose();
     if (widget.tray?.onQuit == _quitFromTray) widget.tray?.onQuit = null;
+    if (widget.updater?.onRestart == _restartForUpdate) {
+      widget.updater?.onRestart = null;
+    }
     super.dispose();
   }
 
@@ -158,6 +184,7 @@ class _GPadAppState extends State<GPadApp> {
           notepad: widget.notepad,
           sync: widget.sync,
           tray: widget.tray,
+          updater: widget.updater,
         ),
       ),
     );

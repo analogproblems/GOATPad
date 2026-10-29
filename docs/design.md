@@ -652,11 +652,70 @@ of scope above.
   attestation for each. A maintainer publishes the draft. The tag must
   match `pubspec.yaml` and have a section in `CHANGELOG.md`, which becomes
   the notes. See [releasing.md](releasing.md). No telemetry.
-- Updates: GPad updates itself from GitHub Releases, checking a signature
-  made by CI before it replaces anything (Jason chose this over only telling
-  people a new version is out). The AppImage and the Windows zip replace
-  themselves; a .deb installs with admin rights, so there GPad only says an
-  update is out.
+- Updates: GPad updates itself from GitHub Releases (see
+  [Updates](#updates-step-4)).
+
+### Updates (step 4)
+
+Jason chose full self-updates over only telling people a new version is
+out. An update replaces the program, so it is the one thing GPad does that
+an attacker would most like to take over. It is built around one rule:
+GPad runs nothing it hasn't checked against a key built into it.
+
+- **The manifest.** Each release holds `gpad-update.json`: its version, and
+  each download's name, size and SHA-256. CI signs it with an Ed25519 key
+  (`gpad-update.json.sig`, made with OpenSSL), whose private half is the
+  `GPAD_UPDATE_SIGNING_KEY` repository secret. The public half is
+  `tool/update_public_key.pem`, which CI builds into GPad along with the
+  repository's name. A build without them, like one from `flutter run`,
+  doesn't update itself.
+- **Checking.** Thirty seconds after starting, then every twelve hours (or
+  when asked, in the window behind the ⓘ button), GPad fetches the newest
+  published release's manifest and signature from GitHub. Drafts and
+  prereleases don't count. It goes on only if the signature checks out and
+  the version is newer than its own, so an old release can't be passed off
+  as new. Only plain requests for public files go out, with nothing about
+  the person or their notes; the check can be turned off.
+- **Downloading.** The download for this installation must have exactly the
+  size and SHA-256 the manifest gives, or it is thrown away. GPad reads no
+  more than that size, gives up on a reply that stops coming, and stops at
+  once if the disk is full.
+- **Installing**, by how GPad was installed:
+  - **AppImage** (`$APPIMAGE` is set): the new file is downloaded next to the
+    old one and renamed over it, which Linux allows while the old one runs.
+    The next start runs the new version. Restart now starts it once this
+    one quits.
+  - **Windows zip** (`gpad.exe` in a folder GPad can write to): Windows
+    won't replace a running program's files, so the zip is unzipped into
+    `.gpad-update` in that folder, refusing names outside its `GPad` folder.
+    When GPad quits, it starts the new `gpad.exe` from there with
+    `--gpad-finish-update <folder> <process id> [--relaunch]`, which waits
+    for the old GPad to end, moves each file it replaces into `.gpad-old`,
+    copies its own in, and puts the old ones back if any step fails. Old
+    files that won't go back, still locked say, stay in `.gpad-old`
+    (marked by `.gpad-replacing`), and the next update puts them back
+    before it changes anything. That copy of GPad shows no window and opens
+    no notes. The next start deletes both folders, keeping `.gpad-old` while
+    files in it must go back, and says if the update failed. Every later version must
+    keep taking those arguments, since the old version starts the new one
+    with them.
+  - **Anything else**, like the .deb (installed with admin rights) or a
+    folder GPad can't write to: GPad says the new version is out and links
+    to its release page.
+- **Restarting.** Restart now quits the way Quit does, saving and uploading
+  first, then starts the new version with `--gpad-updated`, which waits up
+  to 30 seconds for the old one to let go of the notes instead of showing
+  its window. If the new version won't start, GPad stays open and says
+  so, and restarting can be tried again.
+- **The key.** Losing the private key means builds already out can't update
+  to releases signed with a new one: people would download the next version
+  by hand, once. A leaked key would let someone who can also publish a
+  release on this repository ship an update GPad installs, so it lives only
+  in the repository secret and the maintainer's own safe place. Moving to a
+  new key would take a release signed with the old one that carries the
+  new public key. `tool/prepare_release.sh` can't make that yet, since it
+  checks the signature against the key the build carries, and
+  `tool/make_update_key.sh` won't replace a key that is there.
 
 ## Later
 

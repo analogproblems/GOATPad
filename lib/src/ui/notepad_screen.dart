@@ -6,21 +6,30 @@ import '../notes/mode_detector.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
 import '../sync/sync_controller.dart';
+import '../update/updater.dart';
 import 'tray.dart';
 import 'clipboard_html.dart';
 import 'note_editors.dart';
 import 'search_palette.dart';
 import 'sidebar.dart';
 import 'tab_strip.dart';
+import 'updates_dialog.dart';
 
 /// The main window: folders and notes in the sidebar, tabs, the editor and a
 /// status bar.
 class NotepadScreen extends StatelessWidget {
-  const NotepadScreen({super.key, required this.notepad, this.sync, this.tray});
+  const NotepadScreen({
+    super.key,
+    required this.notepad,
+    this.sync,
+    this.tray,
+    this.updater,
+  });
 
   final Notepad notepad;
   final SyncController? sync;
   final Tray? tray;
+  final Updater? updater;
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +82,12 @@ class NotepadScreen extends StatelessWidget {
                 children: [
                   SizedBox(
                     width: 240,
-                    child: Sidebar(notepad: notepad, sync: sync, tray: tray),
+                    child: Sidebar(
+                      notepad: notepad,
+                      sync: sync,
+                      tray: tray,
+                      updater: updater,
+                    ),
                   ),
                   const VerticalDivider(width: 1),
                   Expanded(
@@ -81,6 +95,13 @@ class NotepadScreen extends StatelessWidget {
                       children: [
                         if (notepad.saveProblem case final problem?)
                           _saveProblemBanner(context, problem),
+                        if (updater case final updater?)
+                          ListenableBuilder(
+                            listenable: updater,
+                            builder: (context, _) => updater.showNotice
+                                ? UpdateNotice(updater: updater)
+                                : const SizedBox.shrink(),
+                          ),
                         TabStrip(
                           notepad: notepad,
                           onPasteAsNewNote: _pasteAsNewNote,
