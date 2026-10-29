@@ -93,6 +93,83 @@ void main() {
     expect(saved, startsWith(markdown));
   });
 
+  testWidgets('quoting or listing a table\'s line never loses the table', (
+    tester,
+  ) async {
+    const markdown = '| Team | Person |\n| --- | --- |\n| Core | Ana |\n';
+    for (final format in <Attribute<Object?>>[
+      Attribute.blockQuote,
+      Attribute.ul,
+      Attribute.h2,
+      Attribute.codeBlock,
+    ]) {
+      String? saved;
+      await tester.pumpWidget(
+        _host(
+          QuillNoteEditor(
+            key: UniqueKey(),
+            markdown: markdown,
+            onChanged: (m) => saved = m,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 1));
+      final controller = tester
+          .widget<QuillEditor>(find.byType(QuillEditor))
+          .controller;
+      controller
+        ..updateSelection(
+          const TextSelection.collapsed(offset: 0),
+          ChangeSource.local,
+        )
+        ..formatSelection(format);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(saved, markdown, reason: format.key);
+
+      // Opened again, it is still a table.
+      await tester.pumpWidget(
+        _host(
+          QuillNoteEditor(
+            key: UniqueKey(),
+            markdown: saved!,
+            onChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(find.byType(Table), findsOneWidget, reason: format.key);
+    }
+  });
+
+  testWidgets('table cells keep the spaces around bold, links and code', (
+    tester,
+  ) async {
+    const markdown =
+        '| Say **hello** now | See [the docs](https://example.com) or `gpad --help` here |\n'
+        '| --- | --- |\n'
+        '| a *b* c | ~~x~~ y |\n';
+    await tester.pumpWidget(
+      _host(QuillNoteEditor(markdown: markdown, onChanged: (_) {})),
+    );
+    await tester.pump(const Duration(milliseconds: 1));
+
+    final cells = [
+      for (final text in tester.widgetList<RichText>(
+        find.descendant(
+          of: find.byType(Table),
+          matching: find.byType(RichText),
+        ),
+      ))
+        text.text.toPlainText(),
+    ];
+    expect(cells, [
+      'Say hello now',
+      'See the docs or gpad --help here',
+      'a b c',
+      'x y',
+    ]);
+  });
+
   testWidgets('pasting formatted HTML into a Rich note keeps the formatting', (
     tester,
   ) async {

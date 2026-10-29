@@ -8,6 +8,12 @@ import 'rich_markdown.dart';
 /// never stalls the paste.
 const maxClipboardHtmlLength = 4 << 20;
 
+/// Tables holding more cells than this in all, counting the empty ones
+/// that spanned cells leave, are pasted as plain text. Spans can make a
+/// small copy expand enormously, and a table this big is easier to work
+/// with as the tab-separated text spreadsheets also put on the clipboard.
+const maxTableCells = 5000;
+
 /// Markdown for HTML copied from a browser, Word, Google Docs or LibreOffice,
 /// or null when the HTML holds nothing the plain text doesn't: no headings,
 /// lists, quotes, emphasis, links, images or tables.
@@ -26,7 +32,7 @@ String? markdownFromHtml(String html) {
   if (body == null) return null;
   final walker = _Walker()..walk(body);
   walker.flush();
-  if (!walker.formatted) return null;
+  if (!walker.formatted || walker.tooBig) return null;
   final markdown = RichMarkdown.fromDelta(walker.delta);
   return markdown.trim().isEmpty ? null : markdown;
 }
@@ -164,6 +170,11 @@ class _Walker {
   /// Set once something Markdown can format has been seen.
   var formatted = false;
 
+  /// Set when the tables add up to more than [maxTableCells] cells. The
+  /// walk stops then, and the paste falls back to the plain text.
+  var tooBig = false;
+  var _tableCells = 0;
+
   final _parts = <(Object, Map<String, dynamic>)>[];
   final _blocks = <_Block>[];
   final List<Map<String, Object>> _inline;
@@ -183,7 +194,7 @@ class _Walker {
   void _element(dom.Element element) {
     final tag = element.localName ?? '';
     final style = _styleOf(element);
-    if (_skipped.contains(tag) || _hidden(style)) return;
+    if (tooBig || _skipped.contains(tag) || _hidden(style)) return;
     if (_depth > 200) {
       // Pathologically deep markup keeps its text and nothing else.
       _text(element.text);
@@ -363,6 +374,12 @@ class _Walker {
   /// read as the blocks it holds.
   void _table(dom.Element table) {
     flush();
+    // A caption names the table or its units, so it comes first either way.
+    for (final caption in table.children.where(
+      (c) => c.localName == 'caption',
+    )) {
+      _block(caption, null);
+    }
     final rows = <List<dom.Element>>[];
     void addRows(dom.Element parent) {
       for (final child in parent.children) {
@@ -380,12 +397,8 @@ class _Walker {
 
     addRows(table);
     final grid = table.querySelector('table') == null ? _grid(rows) : null;
+    if (tooBig) return;
     if (grid == null) {
-      for (final caption in table.children.where(
-        (c) => c.localName == 'caption',
-      )) {
-        _block(caption, null);
-      }
       for (final row in rows) {
         for (final cell in row) {
           _block(cell, null);
@@ -410,13 +423,30 @@ class _Walker {
   }
 
   /// Each cell as Markdown, or null if any cell holds more than a line of
-  /// text, or there are fewer than two columns.
+  /// text, or there are fewer than two columns. A cell spanning several
+  /// columns or rows keeps its text in the first and leaves the others
+  /// empty, so every other cell stays in its column.
   List<List<String>>? _grid(List<List<dom.Element>> rows) {
     if (rows.isEmpty) return null;
+    int span(dom.Element cell, String name) =>
+        (int.tryParse(cell.attributes[name] ?? '') ?? 1).clamp(1, 50);
     final grid = <List<String>>[];
+    // For each column a cell from a row above still covers, how many more
+    // rows it covers.
+    final covered = <int, int>{};
+    var cells = 0;
     for (final row in rows) {
-      final cells = <String>[];
+      final out = <String>[];
+      // Leaves the next columns empty while cells above cover them.
+      void skipCovered() {
+        while ((covered[out.length] ?? 0) > 0) {
+          covered[out.length] = covered[out.length]! - 1;
+          out.add('');
+        }
+      }
+
       for (final cell in row) {
+        skipCovered();
         final walker = _Walker(_inline)..walk(cell);
         walker.flush();
         final ops = walker.delta.toList();
@@ -433,18 +463,39 @@ class _Walker {
                   (op.attributes?.isNotEmpty ?? false)),
         );
         if (blocky || lines > 1) return null;
-        cells.add(RichMarkdown.tableCell(walker.delta));
-        final span = int.tryParse(cell.attributes['colspan'] ?? '') ?? 1;
-        for (var i = 1; i < span.clamp(1, 50); i++) {
-          cells.add('');
+        final (columns, down) = (span(cell, 'colspan'), span(cell, 'rowspan'));
+        for (var i = 0; i < columns; i++) {
+          if (down > 1) covered[out.length] = down - 1;
+          out.add(i == 0 ? RichMarkdown.tableCell(walker.delta) : '');
+        }
+        // Checked as cells are added, before any padding to a rectangle.
+        if (_tableCells + cells + out.length > maxTableCells) {
+          tooBig = true;
+          return null;
         }
       }
-      grid.add(cells);
+      // Columns after the row's last cell still covered from above.
+      final last = covered.entries
+          .where((e) => e.value > 0)
+          .fold(-1, (most, e) => e.key > most ? e.key : most);
+      while (out.length <= last) {
+        if ((covered[out.length] ?? 0) > 0) {
+          covered[out.length] = covered[out.length]! - 1;
+        }
+        out.add('');
+      }
+      cells += out.length;
+      grid.add(out);
     }
     final columns = grid
         .map((row) => row.length)
         .fold(0, (a, b) => a > b ? a : b);
-    return columns < 2 ? null : grid;
+    if (columns < 2) return null;
+    if ((_tableCells += grid.length * columns) > maxTableCells) {
+      tooBig = true;
+      return null;
+    }
+    return grid;
   }
 
   Map<String, Object> _currentInline() {

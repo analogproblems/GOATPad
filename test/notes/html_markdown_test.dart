@@ -132,6 +132,47 @@ gpad --help
       );
     });
 
+    test('a caption stays with its table', () {
+      expect(
+        markdownFromHtml(
+          '<table><caption>Amounts in USD, 2026</caption>'
+          '<tr><th>Item</th><th>Cost</th></tr>'
+          '<tr><td>Tea</td><td>3</td></tr></table>',
+        ),
+        'Amounts in USD, 2026\n\n| Item | Cost |\n| --- | --- |\n| Tea | 3 |\n',
+      );
+      expect(
+        markdownFromHtml(
+          '<table><caption>Weekly update</caption><tr><td>'
+          '<p><b>Hello</b></p><p>All is well.</p></td></tr></table>',
+        ),
+        'Weekly update\n\n**Hello**\n\nAll is well.\n',
+      );
+    });
+
+    test('cells spanning rows keep the others in their columns', () {
+      expect(
+        markdownFromHtml(
+          '<table><tr><th>Team</th><th>Person</th><th>Room</th></tr>'
+          '<tr><td rowspan="2">Engineering</td><td>Alice</td>'
+          '<td rowspan="3">4.01</td></tr>'
+          '<tr><td>Bob</td></tr>'
+          '<tr><td>Design</td><td>Cy</td></tr>'
+          '<tr><td>Ops</td><td colspan="2" rowspan="2">Dee</td></tr>'
+          '<tr><td>Ops</td></tr></table>',
+        ),
+        '''
+| Team | Person | Room |
+| --- | --- | --- |
+| Engineering | Alice | 4.01 |
+|  | Bob |  |
+| Design | Cy |  |
+| Ops | Dee |  |
+| Ops |  |  |
+''',
+      );
+    });
+
     test('an email laid out with tables reads as its paragraphs', () {
       const html = '''
 <table width="100%"><tr><td>
@@ -226,6 +267,21 @@ void main() {
 
     test('a single spreadsheet cell', () {
       expect(markdownFromHtml('<table><tr><td>42</td></tr></table>'), isNull);
+    });
+
+    test('a table that spans out to too many cells', () {
+      // Small to copy, but each wide cell would become 50 empty ones on
+      // every row.
+      final wide = '<td colspan="50">x</td>' * 1000;
+      final narrow = '<tr><td><b>a</b></td><td>b</td></tr>' * 5000;
+      expect(markdownFromHtml('<table><tr>$wide</tr>$narrow</table>'), isNull);
+    });
+
+    test('tables that add up to too many cells', () {
+      final rows = '<tr><td><b>a</b></td><td>b</td></tr>' * 1000;
+      final table = '<table>$rows</table>';
+      expect(markdownFromHtml(table * 2), isNotNull);
+      expect(markdownFromHtml(table * 3), isNull);
     });
 
     test('a huge copy', () {

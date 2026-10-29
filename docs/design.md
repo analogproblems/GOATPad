@@ -125,7 +125,10 @@ note's Markdown and the Delta Quill edits.
     (`**Note:**Next`), moves that punctuation out of the bold. Lines where a
     marker touches punctuation are parsed back as a check, and if one still
     reads differently it is written without emphasis: formatting can be
-    lost that way, never text.
+    lost that way, never text;
+  - writes a table or rule as a paragraph of its own even when Quill has
+    let a heading, list, quote or code format onto its line, so only that
+    format is lost, never the table.
 - Formatting Markdown has no syntax for (underline, colors, fonts) is not
   kept. The welcome note and 3,000 random lines of punctuation are tested to
   read back as the same text.
@@ -149,8 +152,15 @@ Markdown:
 - Word writes lists as paragraphs styled `mso-list`; those become lists,
   and the bullet characters Word adds are dropped.
 - A table of short cells becomes a Markdown table, as from a spreadsheet.
-  A table used for layout, with paragraphs or other tables in its cells, as
-  in most emails, is read as the paragraphs it holds.
+  Its caption goes just above it. A cell spanning several columns or rows
+  keeps its text in the first and leaves the rest empty, so the other
+  cells stay in their columns. A table used for layout, with paragraphs or
+  other tables in its cells, as in most emails, is read as the paragraphs
+  it holds.
+- Tables adding up to more than 5,000 cells, counting the empty ones that
+  spans leave, make the whole paste plain text. Spans can turn a small copy
+  into millions of cells, and a table that big is easier to work with as
+  the tab-separated text spreadsheets also copy.
 - Hidden elements, scripts, styles, forms and tracking pixels are dropped.
   Links keep only `http`, `https`, `mailto`, `ftp` and `tel` addresses, and
   images only web addresses, so no `javascript:` link or local file comes

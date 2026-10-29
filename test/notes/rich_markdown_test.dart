@@ -459,6 +459,54 @@ Visit https://example.com or mail someone@example.com today.
     });
   });
 
+  test('a table or rule keeps its place whatever format its line has', () {
+    const table = '| a | b |\n| --- | --- |\n| 1 | 2 |';
+    for (final format in <Map<String, Object>>[
+      {'blockquote': true},
+      {'list': 'bullet'},
+      {'list': 'ordered', 'indent': 1},
+      {'header': 2},
+      {'code-block': true},
+    ]) {
+      final delta = Delta()
+        ..insert('Before')
+        ..insert('\n', format)
+        ..insert({RichMarkdown.tableType: table})
+        ..insert('\n', format)
+        ..insert({RichMarkdown.ruleType: 'hr'})
+        ..insert('\n', format)
+        ..insert('After')
+        ..insert('\n', format);
+      final markdown = RichMarkdown.fromDelta(delta);
+      expect(markdown, contains('\n\n$table\n\n---\n\n'), reason: '$format');
+      // And it stays that way when the note is opened again.
+      expect(roundTrip(markdown), markdown, reason: '$format');
+    }
+  });
+
+  test('a list item indented with no parent still reads as a list', () {
+    final delta = Delta()
+      ..insert('Orphan')
+      ..insert('\n', {'list': 'bullet', 'indent': 2})
+      ..insert('Child')
+      ..insert('\n', {'list': 'bullet', 'indent': 3});
+    expect(RichMarkdown.fromDelta(delta), '- Orphan\n    - Child\n');
+  });
+
+  test('an image on a code line is kept, outside the code', () {
+    final delta = Delta()
+      ..insert('let x = 1;')
+      ..insert('\n', {'code-block': true})
+      ..insert({
+        RichMarkdown.imageType: {'src': 'https://example.com/a.png'},
+      })
+      ..insert('\n', {'code-block': true});
+    expect(
+      RichMarkdown.fromDelta(delta),
+      '```\nlet x = 1;\n```\n\n![](https://example.com/a.png)\n',
+    );
+  });
+
   test('a table cell escapes its pipes', () {
     expect(
       RichMarkdown.tableCell(

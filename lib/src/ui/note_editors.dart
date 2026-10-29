@@ -366,29 +366,39 @@ class _MarkdownTable extends StatelessWidget {
 
   TextSpan _cell(String markdown, TextStyle base, ColorScheme scheme) {
     if (markdown.isEmpty) return const TextSpan(text: '');
+    final ops = [
+      for (final op in RichMarkdown.toDelta(markdown).toList())
+        if (op.data case final String text) (text, op.attributes),
+    ];
+    // Only the newline that ends every Delta goes. The spaces between a
+    // plain run and a bold one, say, stay.
+    if (ops.lastOrNull case (final text, final attributes)
+        when text.endsWith('\n')) {
+      ops.last = (text.substring(0, text.length - 1), attributes);
+    }
     return TextSpan(
       children: [
-        for (final op in RichMarkdown.toDelta(markdown).toList())
-          if (op.data case final String text)
+        for (final (text, attributes) in ops)
+          if (text.isNotEmpty)
             TextSpan(
-              text: text.replaceAll('\n', ' ').trimRight(),
+              text: text.replaceAll('\n', ' '),
               style: base.copyWith(
-                fontWeight: op.attributes?['bold'] == true
+                fontWeight: attributes?['bold'] == true
                     ? FontWeight.bold
                     : null,
-                fontStyle: op.attributes?['italic'] == true
+                fontStyle: attributes?['italic'] == true
                     ? FontStyle.italic
                     : null,
-                decoration: op.attributes?['strike'] == true
+                decoration: attributes?['strike'] == true
                     ? TextDecoration.lineThrough
                     : null,
-                fontFamily: op.attributes?['code'] == true
+                fontFamily: attributes?['code'] == true
                     ? GoatTheme.monoFonts.first
                     : null,
-                fontFamilyFallback: op.attributes?['code'] == true
+                fontFamilyFallback: attributes?['code'] == true
                     ? GoatTheme.monoFonts
                     : null,
-                color: op.attributes?['link'] != null ? scheme.primary : null,
+                color: attributes?['link'] != null ? scheme.primary : null,
               ),
             ),
       ],

@@ -134,6 +134,21 @@ class _Line {
   };
   bool get isBlank =>
       parts.every((part) => part.isText && part.text.trim().isEmpty);
+
+  /// Holds a rule or a table, which Markdown can only write on lines of
+  /// their own. Quill still lets a heading, list, quote or code format be
+  /// put on such a line; the line is written as a plain paragraph then, so
+  /// the table or rule is kept and only that format is lost.
+  bool get hasBlockEmbed => parts.any(
+    (part) => const {
+      RichMarkdown.ruleType,
+      RichMarkdown.tableType,
+    }.contains(part.embed?.type),
+  );
+
+  /// A line of a code block. One holding an embed, like an image, can't be
+  /// written inside a fence, so it is written as an ordinary line instead.
+  bool get isCodeBlock => isCode && parts.every((part) => part.isText);
 }
 
 /// Splits [delta] into lines. In a Delta each `\n` ends a line and carries
@@ -185,19 +200,27 @@ String _write(List<_Line> lines) {
 
   while (i < lines.length) {
     final line = lines[i];
-    if (line.isCode) {
-      final end = runEnd((l) => l.isCode);
+    if (line.hasBlockEmbed) {
+      blocks.addAll(_paragraph(line));
+      i++;
+    } else if (line.isCodeBlock) {
+      final end = runEnd((l) => l.isCodeBlock);
       blocks.add(_codeBlock(lines.sublist(i, end)));
       i = end;
     } else if (line.list != null) {
-      final end = runEnd((l) => l.list != null && !l.isCode);
+      final end = runEnd(
+        (l) => l.list != null && !l.isCodeBlock && !l.hasBlockEmbed,
+      );
       blocks.add(_list(lines.sublist(i, end)));
       i = end;
     } else if (line.heading != null) {
       blocks.add(_heading(line));
       i++;
     } else if (line.isQuote) {
-      final end = runEnd((l) => l.isQuote && l.list == null && !l.isCode);
+      final end = runEnd(
+        (l) =>
+            l.isQuote && l.list == null && !l.isCodeBlock && !l.hasBlockEmbed,
+      );
       blocks.add(lines.sublist(i, end).map(_quoteLine).join('\n'));
       i = end;
     } else {
@@ -243,7 +266,9 @@ String _list(List<_Line> lines) {
   // parent's text, so it follows the width of the parent's marker.
   final childPads = <int, int>{};
   for (final line in lines) {
-    final level = line.indent;
+    // An item nests at most one level below the item before it. Indented
+    // further, with no parent to hang from, it would read back as code.
+    final level = min(line.indent, types.keys.fold(-1, max) + 1);
     for (final map in [counts, types, childPads]) {
       map.removeWhere((key, _) => key > level);
     }
