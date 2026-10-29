@@ -11,6 +11,8 @@ import '../notes/name_suggester.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
 import '../store/note_store.dart';
+import '../sync/record_data.dart';
+import '../sync/sync_record.dart';
 import '../theme.dart';
 import 'welcome_note.dart';
 
@@ -49,7 +51,7 @@ class Notepad extends ChangeNotifier {
     final now = clock();
     final notes = store.loadNotes();
     final folders = store.loadFolders();
-    _repairTree(folders, notes);
+    store.saveFolders(_breakLoops(folders));
 
     final expired = [
       for (final note in notes)
@@ -63,7 +65,7 @@ class Notepad extends ChangeNotifier {
     if (store.setting(_welcomedKey) == null) {
       final welcome = Note(
         id: newId(),
-        title: 'Welcome to GPad',
+        title: _welcomeTitle,
         titleEdited: true,
         text: welcomeNote,
         guess: const ModeGuess.rich(),
@@ -91,6 +93,7 @@ class Notepad extends ChangeNotifier {
   static const retryDelay = Duration(seconds: 5);
   static const trashKeptFor = Duration(days: 30);
 
+  static const _welcomeTitle = 'Welcome to GPad';
   static const _welcomedKey = 'welcomed';
   static const _selectedKey = 'selected_note';
   static const _appearanceKey = 'appearance';
@@ -112,16 +115,23 @@ class Notepad extends ChangeNotifier {
   /// Theme, light or dark, and code colors. Saved whenever they change.
   final ValueNotifier<Appearance> appearance;
 
+  /// Called after each save that wrote something, so sync can upload it.
+  VoidCallback? onSaved;
+
+  /// The store, for sync's own records.
+  NoteStore get store => _store;
+
   /// Open tabs grouped by folder: one group per folder with open notes, in
   /// sidebar order, then the tabs that aren't in a folder.
   List<TabGroup> get tabGroups {
     final open = _notes.where((n) => n.status == NoteStatus.open).toList()
       ..sort((a, b) => a.tabOrder.compareTo(b.tabOrder));
+    final byId = {for (final f in _folders) f.id: f};
     final groups = <TabGroup>[];
     for (final folder in [..._walk(null), null]) {
       final notes = [
         for (final note in open)
-          if (note.folderId == folder?.id) note,
+          if (byId[note.folderId]?.id == folder?.id) note,
       ];
       if (notes.isNotEmpty) groups.add(TabGroup(folder, notes));
     }
@@ -153,21 +163,23 @@ class Notepad extends ChangeNotifier {
 
   /// The folders directly inside [parent], or at the top level, by name.
   List<Folder> foldersIn(Folder? parent) =>
-      _folders.where((f) => f.parentId == parent?.id).toList()..sort(_byName);
+      _folders.where((f) => parentOf(f) == parent).toList()..sort(_byName);
 
   /// The notes directly inside [folder], or at the top level, by title.
   /// Leaves out the trash.
   List<Note> notesIn(Folder? folder) =>
       _notes
-          .where(
-            (n) => n.status != NoteStatus.trashed && n.folderId == folder?.id,
-          )
+          .where((n) => n.status != NoteStatus.trashed && folderOf(n) == folder)
           .toList()
         ..sort(_byTitle);
 
+  /// The folder [note] is in, or null at the top level. A note whose folder
+  /// is missing, say because sync hasn't brought it yet, shows at the top
+  /// level but keeps its folder, and moves into it when it arrives.
   Folder? folderOf(Note note) => _folderById(note.folderId);
 
-  /// The folder [folder] is in, or null at the top level.
+  /// The folder [folder] is in, or null at the top level, which is also
+  /// where a folder whose parent is missing shows.
   Folder? parentOf(Folder folder) => _folderById(folder.parentId);
 
   /// How many folders [folder] is inside: 0 at the top level.
@@ -480,6 +492,14 @@ class Notepad extends ChangeNotifier {
   /// Removes [folder] but keeps what was in it: its notes, trashed ones too,
   /// and its folders move up to the folder it was in.
   void deleteFolder(Folder folder) {
+    _removeFolder(folder);
+    // One transaction, so the folder is never gone with its notes still
+    // pointing at it.
+    flush();
+    notifyListeners();
+  }
+
+  void _removeFolder(Folder folder) {
     for (final note in _notes) {
       if (note.folderId != folder.id) continue;
       note.folderId = folder.parentId;
@@ -493,10 +513,6 @@ class Notepad extends ChangeNotifier {
     _folders.remove(folder);
     _unsavedFolders.remove(folder);
     _deletedFolders.add(folder.id);
-    // One transaction, so the folder is never gone with its notes still
-    // pointing at it.
-    flush();
-    notifyListeners();
   }
 
   /// Shows or hides what is inside [folder] in the sidebar.
@@ -547,12 +563,92 @@ class Notepad extends ChangeNotifier {
       _unsavedSettings.clear();
       _deleted.clear();
       _deletedFolders.clear();
+      onSaved?.call();
     }
     if (_saveError != null) {
       _saveError = null;
       notifyListeners();
     }
     return true;
+  }
+
+  /// The note or folder [id] as sync uploads it, or null if there is none.
+  Map<String, Object?>? syncData(RecordKind kind, String id) => switch (kind) {
+    RecordKind.note => switch (_noteById(id)) {
+      final note? => noteData(note),
+      null => null,
+    },
+    RecordKind.folder => switch (_folderById(id)) {
+      final folder? => folderData(folder),
+      null => null,
+    },
+  };
+
+  /// Whether sync should leave [id] on this machine: the welcome note,
+  /// until it is edited, so each machine doesn't collect everyone's.
+  bool isLocalOnly(RecordKind kind, String id) {
+    if (kind != RecordKind.note) return false;
+    final note = _noteById(id);
+    return note != null &&
+        note.text == welcomeNote &&
+        note.title == _welcomeTitle;
+  }
+
+  /// Puts notes and folders as other machines left them: creates, updates
+  /// or deletes each of [changes], and adds [newNotes] (copies kept when
+  /// two machines changed a note at once) as new open notes. Saves it all
+  /// in one transaction, and returns whether saving worked.
+  bool applySynced(
+    List<SyncedChange> changes, {
+    List<Map<String, Object?>> newNotes = const [],
+  }) {
+    // Folders first, so notes find the folders they are in.
+    for (final change in changes) {
+      if (change.kind != RecordKind.folder) continue;
+      final folder = _folderById(change.id);
+      final data = change.data;
+      if (data == null) {
+        if (folder != null) _removeFolder(folder);
+      } else if (folder != null) {
+        applyFolderData(folder, data);
+        _unsavedFolders.add(folder);
+      } else {
+        final added = folderFromData(change.id, data);
+        _folders.add(added);
+        _unsavedFolders.add(added);
+      }
+    }
+    for (final change in changes) {
+      if (change.kind != RecordKind.note) continue;
+      final note = _noteById(change.id);
+      final data = change.data;
+      if (data == null) {
+        if (note == null) continue;
+        _notes.remove(note);
+        _unsaved.remove(note);
+        _deleted.add(note.id);
+      } else if (note != null) {
+        final (text, title) = (note.text, note.title);
+        applyNoteData(note, data);
+        if (note.text != text) note.textVersion++;
+        if (note.title != title) note.titleVersion++;
+        _unsaved.add(note);
+      } else {
+        final added = noteFromData(change.id, data);
+        _notes.add(added);
+        _unsaved.add(added);
+      }
+    }
+    for (final data in newNotes) {
+      final copy = noteFromData(newId(), data)
+        ..tabOrder = _nextTabOrder(_notes);
+      _notes.add(copy);
+      _unsaved.add(copy);
+    }
+    _unsavedFolders.addAll(_breakLoops(_folders));
+    final saved = flush();
+    notifyListeners();
+    return saved;
   }
 
   @override
@@ -598,6 +694,13 @@ class Notepad extends ChangeNotifier {
   Folder? get _currentFolder {
     final note = selected;
     return note == null ? null : folderOf(note);
+  }
+
+  Note? _noteById(String id) {
+    for (final note in _notes) {
+      if (note.id == id) return note;
+    }
+    return null;
   }
 
   Folder? _folderById(String? id) {
@@ -685,24 +788,29 @@ class Notepad extends ChangeNotifier {
     return last + 1;
   }
 
-  /// Puts folders whose parent is missing, or that are inside themselves,
-  /// at the top level, and does the same for notes in missing folders. Only
-  /// a bug or a damaged file could cause either, but the sidebar would
-  /// otherwise lose them or never stop drawing.
-  static void _repairTree(List<Folder> folders, List<Note> notes) {
+  /// Breaks loops of folders inside each other, which two machines moving
+  /// folders into each other at once can make, and returns the folders it
+  /// moved. The folder with the lowest id in each loop moves to the top
+  /// level, so every machine breaks a loop the same way. The sidebar would
+  /// otherwise never stop drawing.
+  static List<Folder> _breakLoops(List<Folder> folders) {
     final byId = {for (final f in folders) f.id: f};
+    final moved = <Folder>[];
     for (final folder in folders) {
-      final seen = {folder.id};
-      for (var id = folder.parentId; id != null; id = byId[id]?.parentId) {
-        if (!byId.containsKey(id) || !seen.add(id)) {
-          folder.parentId = null;
-          break;
-        }
+      final path = <String>[];
+      String? id = folder.id;
+      while (id != null && byId.containsKey(id) && !path.contains(id)) {
+        path.add(id);
+        id = byId[id]!.parentId;
       }
+      // Reached the top level or a folder that isn't here.
+      if (id == null || !byId.containsKey(id)) continue;
+      final loop = path.sublist(path.indexOf(id));
+      final lowest = byId[loop.reduce((a, b) => a.compareTo(b) < 0 ? a : b)]!;
+      lowest.parentId = null;
+      moved.add(lowest);
     }
-    for (final note in notes) {
-      if (!byId.containsKey(note.folderId)) note.folderId = null;
-    }
+    return moved;
   }
 
   static int _byName(Folder a, Folder b) {
@@ -727,6 +835,18 @@ class Notepad extends ChangeNotifier {
     }
     return const Appearance();
   }
+}
+
+/// A note or folder as another machine left it, for [Notepad.applySynced].
+class SyncedChange {
+  const SyncedChange(this.kind, this.id, this.data);
+
+  final RecordKind kind;
+  final String id;
+
+  /// Its fields, as [noteData] or [folderData] gives them, or null if it
+  /// was deleted.
+  final Map<String, Object?>? data;
 }
 
 /// Open tabs that share a folder, or that aren't in one.

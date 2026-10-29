@@ -56,6 +56,7 @@ Architecture: amd64
 Maintainer: GOATPad contributors <https://github.com/analogproblems/GOATPad>
 Installed-Size: $size
 Depends: libgtk-3-0t64 | libgtk-3-0, libegl1, libgles2, libepoxy0, libstdc++6, libc6 (>= 2.34)
+Recommends: libsecret-1-0
 Section: editors
 Priority: optional
 Homepage: https://github.com/analogproblems/GOATPad

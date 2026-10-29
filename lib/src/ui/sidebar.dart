@@ -4,10 +4,12 @@ import 'package:flutter/services.dart';
 import '../notepad/notepad.dart';
 import '../notes/folder.dart';
 import '../notes/note.dart';
+import '../sync/sync_controller.dart';
 import 'appearance_dialog.dart';
 import 'icons.dart';
 import 'menus.dart';
 import 'search_palette.dart';
+import 'sync_dialog.dart';
 
 /// Folders and notes as a tree, then the trash.
 ///
@@ -15,9 +17,13 @@ import 'search_palette.dart';
 /// onto the NOTES heading or the empty space below the tree to move them to
 /// the top level.
 class Sidebar extends StatefulWidget {
-  const Sidebar({super.key, required this.notepad});
+  const Sidebar({super.key, required this.notepad, this.sync});
 
   final Notepad notepad;
+
+  /// Sync, whose state shows at the bottom. Null in tests that don't need
+  /// it.
+  final SyncController? sync;
 
   @override
   State<Sidebar> createState() => _SidebarState();
@@ -90,6 +96,10 @@ class _SidebarState extends State<Sidebar> {
                 ),
               ),
           ],
+          if (widget.sync case final sync?) ...[
+            const Divider(),
+            _syncRow(context, sync),
+          ],
           Padding(
             padding: const EdgeInsets.all(12),
             child: Text(
@@ -102,6 +112,34 @@ class _SidebarState extends State<Sidebar> {
           ),
         ],
       ),
+    );
+  }
+
+  /// How sync is going; a click opens the sync dialog.
+  Widget _syncRow(BuildContext context, SyncController sync) {
+    final theme = Theme.of(context);
+    return ListenableBuilder(
+      listenable: sync,
+      builder: (context, _) {
+        final summary = syncSummary(sync);
+        final attention = switch (sync.status) {
+          SyncStatus.problem || SyncStatus.locked => true,
+          _ => sync.unreadable.isNotEmpty,
+        };
+        final color = attention
+            ? theme.colorScheme.error
+            : theme.colorScheme.outline;
+        return ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(summary.icon, size: 18, color: color),
+          title: Text(
+            summary.label,
+            style: theme.textTheme.bodySmall?.copyWith(color: color),
+          ),
+          onTap: () => showSyncDialog(context, sync),
+        );
+      },
     );
   }
 

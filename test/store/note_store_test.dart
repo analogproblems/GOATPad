@@ -205,11 +205,47 @@ void main() {
     expect(note.folderId, isNull);
     expect(store.loadFolders(), isEmpty);
     expect(store.setting('welcomed'), '1');
+    // Notes from before sync are waiting to be uploaded once it is on.
+    expect(store.pendingSync().map((s) => s.id), ['a1']);
     store.close();
 
     final db = sqlite3.open(path);
     expect(db.userVersion, NoteStore.schemaVersion);
     db.close();
+  });
+
+  test('sync counts the changes other machines see, and only those', () {
+    final store = NoteStore.inMemory();
+    int seq(String id) => store.syncState(id)!.localSeq;
+    final note = _note(text: 'one');
+    store.saveNote(note);
+    expect(seq('a1'), 1);
+    store.saveNote(note);
+    expect(seq('a1'), 1, reason: 'saving the same values is no change');
+    store.saveNote(note..text = 'two');
+    expect(seq('a1'), 2);
+
+    final folder = Folder(
+      id: 'f1',
+      name: 'Work',
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+    store.saveFolder(folder);
+    store.saveFolder(folder..expanded = false);
+    store.saveFolder(folder..tabsCollapsed = true);
+    expect(seq('f1'), 1, reason: 'folding stays on each machine');
+    store.saveFolder(folder..name = 'Job');
+    expect(seq('f1'), 2);
+
+    store.saveSyncState('a1', kind: 'note');
+    expect(store.pendingSync().map((s) => s.id), ['f1']);
+    store.deleteNotes(['a1']);
+    expect(seq('a1'), 3);
+    expect(store.pendingSync().map((s) => s.id), containsAll(['a1', 'f1']));
+    store.saveSyncState('a1', kind: 'note', upload: true);
+    expect(store.syncState('a1')!.syncedSeq, -1);
+    store.close();
   });
 
   group('search', () {
@@ -320,12 +356,19 @@ void main() {
     final path = '${temp.path}/notes.db';
     final store = NoteStore.open(path);
     store.saveNote(_note(text: 'Remember the milk'));
-    // Back to schema 2: no search index yet.
+    // Back to schema 2: no search index or sync records yet.
     store.database.execute('''
       DROP TRIGGER notes_fts_insert;
       DROP TRIGGER notes_fts_delete;
       DROP TRIGGER notes_fts_update;
       DROP TABLE notes_fts;
+      DROP TRIGGER notes_sync_insert;
+      DROP TRIGGER notes_sync_update;
+      DROP TRIGGER notes_sync_delete;
+      DROP TRIGGER folders_sync_insert;
+      DROP TRIGGER folders_sync_update;
+      DROP TRIGGER folders_sync_delete;
+      DROP TABLE sync_records;
     ''');
     store.database.userVersion = 2;
     store.close();

@@ -44,6 +44,11 @@ dependencies:
   sqlite3: ^3.8.0
   html: ^0.15.6
   quill_native_bridge: ^11.1.0
+  sodium: ^4.1.2
+  path: ^1.9.1
+  collection: ^1.19.1
+  ffi: ^2.2.0
+  file_selector: ^1.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

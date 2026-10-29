@@ -4,6 +4,7 @@ import 'src/app.dart';
 import 'src/notepad/notepad.dart';
 import 'src/store/data_location.dart';
 import 'src/store/note_store.dart';
+import 'src/sync/sync_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,5 +32,9 @@ Future<void> main() async {
     );
     return;
   }
-  runApp(GPadApp(notepad: notepad));
+  final sync = SyncController(notepad);
+  runApp(GPadApp(notepad: notepad, sync: sync));
+  // After the window is up: reading the keychain can take a moment, or
+  // wait for the person to unlock it.
+  await sync.start();
 }

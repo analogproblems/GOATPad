@@ -12,16 +12,17 @@ waiting in a tab on your Linux machine at home.
 
 ## Status
 
-Early. Step 2, the local notepad, is done: notes are saved as you type,
-your tabs come back when you reopen GPad, folders double as tab groups,
-Ctrl+P searches everything, and pasting from a web page or Word keeps the
-formatting. Sync is next.
+Early. The local notepad is done: notes are saved as you type, your tabs
+come back when you reopen GPad, folders double as tab groups, Ctrl+P
+searches everything, and pasting from a web page or Word keeps the
+formatting. Encrypted sync works through any folder that Dropbox, OneDrive,
+Nextcloud or Syncthing keeps in step; Google Drive is next.
 
 | Step | What it delivers | State |
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
-| 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
+| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder done) |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
@@ -38,8 +39,10 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
   closed, so tabs stay tidy without throwing anything away.
 - **Folders are tab groups.** Open notes are grouped in the tab strip by the
   folder they are in, and a click folds a group away.
-- **Private sync.** Notes are encrypted on your device before they reach
-  Google Drive or your sync folder. There is no GPad server.
+- **Private sync.** Notes are encrypted on your device, with a passphrase
+  only you know, before they reach your sync folder (and, soon, Google
+  Drive). There is no GPad server. Edits on two computers at once are
+  merged, and when both changed the same text you get both versions.
 - **Your look.** Warm, Classic or Slate themes, each in light and dark, and
   code colors you can switch to a colorblind-safe or high-contrast scheme.
 
@@ -59,6 +62,11 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
    it; switch the note to Plain to see the Markdown underneath.
 7. Open **Appearance** (the palette button) to try the themes and code
    colors. GPad remembers your choice.
+8. Click **Sync is off** at the bottom of the sidebar and choose a folder
+   that Dropbox, OneDrive, Nextcloud or Syncthing syncs. Pick a passphrase
+   and save the recovery key. On your other computer, choose the same
+   folder and type the same passphrase: your notes from both appear on
+   both, and edits show up on the other one a few seconds later.
 
 ## Where your notes are
 
@@ -70,6 +78,11 @@ GPad keeps everything in one SQLite file, `notes.db`:
 Set `GPAD_DATA_DIR` to use another folder, for example to run a portable
 copy from a USB stick. Only one GPad can have the file open at a time; a
 second window tells you GPad is already open instead of risking your edits.
+
+With sync on, the encrypted copies live in a `GPad` folder inside the sync
+folder you chose. GPad remembers your passphrase in the system keychain
+(GNOME Keyring or KWallet on Linux, Credential Manager on Windows) if you
+let it, and asks for it each time it starts otherwise.
 
 ## Download a test build
 
@@ -96,7 +109,7 @@ later.
 On Linux, also install the desktop build tools:
 
 ```sh
-sudo apt-get install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+sudo apt-get install clang cmake make ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
 ```
 
 Then:

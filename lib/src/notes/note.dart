@@ -42,7 +42,7 @@ class Note {
   /// Position in the tab strip while [status] is [NoteStatus.open].
   int tabOrder;
 
-  final DateTime createdAt;
+  DateTime createdAt;
   DateTime updatedAt;
   DateTime? trashedAt;
 
@@ -52,6 +52,10 @@ class Note {
   /// Bumped when GPad renames the note, so the title field reloads. Not
   /// stored.
   int titleVersion = 0;
+
+  /// Bumped when the text changes other than by typing, say by sync, so
+  /// the editor reloads. Not stored.
+  int textVersion = 0;
 }
 
 final _random = Random.secure();

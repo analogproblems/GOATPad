@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
 import 'notepad/notepad.dart';
+import 'sync/sync_controller.dart';
 import 'theme.dart';
 import 'ui/notepad_screen.dart';
 
@@ -16,9 +17,10 @@ const _localizationsDelegates = [
 ];
 
 class GPadApp extends StatefulWidget {
-  const GPadApp({super.key, required this.notepad});
+  const GPadApp({super.key, required this.notepad, this.sync});
 
   final Notepad notepad;
+  final SyncController? sync;
 
   @override
   State<GPadApp> createState() => _GPadAppState();
@@ -29,17 +31,25 @@ class _GPadAppState extends State<GPadApp> {
 
   // Typing is saved a moment after each keystroke. Save the last moment too
   // whenever the window loses focus, hides or closes.
+  // Coming back to the window is a good moment to look for changes made
+  // on other computers.
   late final _lifecycle = AppLifecycleListener(
     onStateChange: (_) => widget.notepad.flush(),
+    onResume: () => widget.sync?.syncNow(),
     onExitRequested: _exitRequested,
   );
 
-  /// Quits once everything is saved. If saving fails, asks before quitting
-  /// and losing the latest changes.
+  /// Quits once everything is saved, and uploaded if sync is on (giving up
+  /// after a few seconds; it goes up next time). If saving fails, asks
+  /// before quitting and losing the latest changes.
   Future<AppExitResponse> _exitRequested() async {
     final notepad = widget.notepad;
     final context = _navigator.currentContext;
-    if (notepad.flush() || context == null) return AppExitResponse.exit;
+    if (notepad.flush()) {
+      await widget.sync?.finish();
+      return AppExitResponse.exit;
+    }
+    if (context == null) return AppExitResponse.exit;
     final quit = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -90,7 +100,7 @@ class _GPadAppState extends State<GPadApp> {
         themeMode: appearance.mode,
         localizationsDelegates: _localizationsDelegates,
         supportedLocales: const [Locale('en')],
-        home: NotepadScreen(notepad: widget.notepad),
+        home: NotepadScreen(notepad: widget.notepad, sync: widget.sync),
       ),
     );
   }

@@ -30,6 +30,16 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
+      # Sync keeps its key in the desktop keychain. Test against a real one:
+      # gnome-keyring on a private session bus.
+      - name: Test the Linux keychain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dbus gnome-keyring libsecret-1-0
+          dbus-run-session -- sh -c '
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            GPAD_TEST_KEYCHAIN=1 flutter test test/sync/keychain_test.dart
+          '
 
   build-linux:
     name: Build Linux
@@ -44,7 +54,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl git unzip xz-utils zip file jq dpkg-dev \
+            ca-certificates curl git unzip xz-utils zip file jq dpkg-dev make \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -108,6 +118,9 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # Sync's files, folder watching and Credential Manager behave
+      # differently on Windows, so its tests run here too.
+      - run: flutter test test/sync
       - run: flutter build windows --release
       # Flutter apps need the Visual C++ runtime, which many PCs (and locked-down
       # work machines) don't have. Shipping it next to gpad.exe keeps the
