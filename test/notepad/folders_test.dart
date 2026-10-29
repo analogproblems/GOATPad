@@ -1,3 +1,4 @@
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goatpad/src/notepad/notepad.dart';
 import 'package:goatpad/src/notes/folder.dart';
@@ -16,6 +17,31 @@ void main() {
 
   Note stored(Note note) =>
       store.loadNotes().firstWhere((n) => n.id == note.id);
+
+  Folder storedFolder(Folder folder) =>
+      store.loadFolders().firstWhere((f) => f.id == folder.id);
+
+  /// Fills the "disk" for any change to the folders table, as the note save
+  /// test does for notes, so a save fails partway through its transaction.
+  /// Returns a function that frees the space again.
+  void Function() fillDiskForFolders() {
+    final db = store.database;
+    db.execute('CREATE TABLE ballast (data BLOB)');
+    final pages = db.select('PRAGMA page_count').single.values.single;
+    db.execute('PRAGMA max_page_count = $pages');
+    for (final change in ['INSERT', 'UPDATE', 'DELETE']) {
+      db.execute(
+        'CREATE TEMP TRIGGER fill_on_$change BEFORE $change ON main.folders '
+        'BEGIN INSERT INTO ballast VALUES (randomblob(100000)); END',
+      );
+    }
+    return () {
+      for (final change in ['INSERT', 'UPDATE', 'DELETE']) {
+        db.execute('DROP TRIGGER fill_on_$change');
+      }
+      db.execute('PRAGMA max_page_count = 1000000');
+    };
+  }
 
   List<String?> groupNames(Notepad notepad) => [
     for (final group in notepad.tabGroups) group.folder?.name,
@@ -106,6 +132,87 @@ void main() {
     ]);
     expect(restarted.trashedNotes.single.folderId, home.id);
     restarted.dispose();
+  });
+
+  test('folders made and moved while saving fails are saved by the retry', () {
+    fakeAsync((async) {
+      final notepad = load();
+      final home = notepad.createFolder(name: 'Home');
+      final recipes = notepad.createFolder(parent: home, name: 'Recipes');
+      final work = notepad.createFolder(name: 'Work');
+      final soup = notepad.newNoteIn(recipes);
+      final freeSpace = fillDiskForFolders();
+
+      final trips = notepad.createFolder(name: 'Trips');
+      notepad.moveFolder(recipes, work);
+      notepad.renameFolder(work, 'Office');
+      // The note's save shares the failing transaction, so it waits too.
+      notepad.moveNote(soup, trips);
+
+      expect(notepad.saveProblem, contains('full'));
+      expect(notepad.flush(), isFalse);
+      expect(notepad.folders, [home, work, recipes, trips]);
+      expect(store.loadFolders().map((f) => f.id), isNot(contains(trips.id)));
+      expect(storedFolder(recipes).parentId, home.id);
+      expect(storedFolder(work).name, 'Work');
+      expect(stored(soup).folderId, recipes.id);
+
+      freeSpace();
+      async.elapse(Notepad.retryDelay);
+      expect(notepad.saveProblem, isNull);
+      notepad.dispose();
+
+      final restarted = load();
+      expect(restarted.folders.map(restarted.pathOf), [
+        'Home',
+        'Office',
+        'Office / Recipes',
+        'Trips',
+      ]);
+      expect(restarted.notesIn(restarted.folders.last).single.id, soup.id);
+      restarted.dispose();
+    });
+  });
+
+  test('a folder deleted while saving fails is not half deleted on disk', () {
+    fakeAsync((async) {
+      final notepad = load();
+      final home = notepad.createFolder(name: 'Home');
+      final recipes = notepad.createFolder(parent: home, name: 'Recipes');
+      final desserts = notepad.createFolder(parent: recipes, name: 'Desserts');
+      final soup = notepad.newNoteIn(recipes);
+      final stew = notepad.newNoteIn(recipes);
+      notepad.trash(stew);
+      final freeSpace = fillDiskForFolders();
+
+      notepad.deleteFolder(recipes);
+
+      // GPad shows the result straight away...
+      expect(notepad.saveProblem, contains('full'));
+      expect(notepad.folders, [home, desserts]);
+      expect(soup.folderId, home.id);
+      // ...but on disk nothing has moved yet: the notes were written first
+      // in the same transaction, and were rolled back with the rest.
+      expect(storedFolder(recipes).name, 'Recipes');
+      expect(storedFolder(desserts).parentId, recipes.id);
+      expect(stored(soup).folderId, recipes.id);
+      expect(stored(stew).folderId, recipes.id);
+
+      freeSpace();
+      async.elapse(Notepad.retryDelay);
+      expect(notepad.saveProblem, isNull);
+      notepad.dispose();
+
+      final restarted = load();
+      expect(restarted.folders.map(restarted.pathOf), [
+        'Home',
+        'Home / Desserts',
+      ]);
+      final loadedHome = restarted.folders.first;
+      expect(restarted.notesIn(loadedHome).map((n) => n.id), [soup.id]);
+      expect(restarted.trashedNotes.single.folderId, home.id);
+      restarted.dispose();
+    });
   });
 
   test('a folder can\'t go inside itself or a folder inside it', () {
