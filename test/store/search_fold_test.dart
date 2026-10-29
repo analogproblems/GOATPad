@@ -19,32 +19,52 @@ void main() {
     expect(sources, [0, 1, 2, 3, 4, 5, 6, 8]);
   });
 
-  test("treats exactly the same characters as equal as SQLite's index", () {
+  test('folds letters outside the BMP as SQLite does', () {
+    final sources = <int>[];
+    // SQLite folds Deseret capitals and leaves the rest, like Osage, alone.
+    expect(
+      foldForSearch('\u{10400}x\u{104B0}', sources),
+      '\u{10428}x\u{104B0}',
+    );
+    expect(sources, [0, 0, 2, 3, 3]);
+    expect(charWidthAt('\u{10400}x', 0), 2);
+    expect(charWidthAt('\u{10400}x', 2), 1);
+  });
+
+  test("treats exactly the same text as equal as SQLite's index", () {
     final db = sqlite3.openInMemory();
     addTearDown(db.close);
     db.execute(
       'CREATE VIRTUAL TABLE t USING fts5('
       "x, tokenize = 'trigram remove_diacritics 2')",
     );
-    // Every character outside the surrogates, combining marks and the two
-    // non-characters at the very end, each between two letters.
-    final characters = [
-      for (var c = 0x20; c < 0xfffe; c++)
-        if (!isCombiningMark(c) && (c < 0xd800 || c > 0xdfff)) c,
+    // Every character but the surrogates, combining marks and the
+    // non-characters at the end of each plane, through the second plane,
+    // plus letters followed by combining marks typed apart. Each sits
+    // between two letters, to make a trigram.
+    final samples = [
+      for (var c = 0x20; c < 0x20000; c++)
+        if (!isCombiningMark(c) &&
+            (c < 0xd800 || c > 0xdfff) &&
+            c & 0xfffe != 0xfffe)
+          String.fromCharCode(c),
+      for (final letter in ['a', 'E', 'n', 'O', 'u', 'ı', 'ø', 'ß', 'ά'])
+        for (var mark = 0x300; mark <= 0x36f; mark++)
+          '$letter${String.fromCharCode(mark)}',
     ];
     final insert = db.prepare('INSERT INTO t (rowid, x) VALUES (?, ?)');
     final sameFold = <String, Set<int>>{};
     db.execute('BEGIN');
-    for (final c in characters) {
-      final text = 'q${String.fromCharCode(c)}z';
-      insert.execute([c, text]);
-      sameFold.putIfAbsent(foldForSearch(text), () => {}).add(c);
+    for (var i = 0; i < samples.length; i++) {
+      final text = 'q${samples[i]}z';
+      insert.execute([i, text]);
+      sameFold.putIfAbsent(foldForSearch(text), () => {}).add(i);
     }
     db.execute('COMMIT');
     insert.close();
 
     // Searching the index for each folded form must find exactly the
-    // characters that fold to it: no fewer, and no more.
+    // samples that fold to it: no fewer, and no more.
     final disagree = <String>[];
     sameFold.forEach((folded, expected) {
       final found = {
@@ -54,7 +74,10 @@ void main() {
           row['rowid'] as int,
       };
       if (found.length != expected.length || !found.containsAll(expected)) {
-        disagree.add('$folded: $expected vs $found');
+        disagree.add(
+          '$folded: ${expected.map((i) => samples[i])} vs '
+          '${found.map((i) => samples[i])}',
+        );
       }
     });
     expect(disagree, isEmpty);

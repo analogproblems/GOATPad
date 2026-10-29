@@ -304,17 +304,23 @@ class NoteStore {
     final words = query.trim().split(RegExp(r'\s+'))
       ..removeWhere((w) => w.isEmpty);
     if (words.isEmpty) return const [];
-    // Trigrams need three characters. Shorter words are looked for in a
-    // plain scan, which is fine at notepad sizes. It folds case and accents
-    // the way the index does, so both kinds of word match the same way.
-    final indexed = [
+    // Trigrams need three characters, counted once case and accents are
+    // folded: `fe` plus a combining accent is only two. Shorter words are
+    // looked for in a plain scan, which is fine at notepad sizes. It folds
+    // the same way as the index, so both kinds of word match alike.
+    final folded = [
       for (final w in words)
-        if (w.runes.length >= 3) '"${w.replaceAll('"', '""')}"',
+        if (foldForSearch(w) case final f when f.isNotEmpty) f,
+    ];
+    if (folded.isEmpty) return const [];
+    final indexed = [
+      for (final f in folded)
+        if (f.runes.length >= 3) '"${f.replaceAll('"', '""')}"',
     ];
     final short = [
-      for (final w in words)
-        if (w.runes.length < 3) foldForSearch(w),
-    ]..removeWhere((w) => w.isEmpty);
+      for (final f in folded)
+        if (f.runes.length < 3) f,
+    ];
     final scan = [
       for (final _ in short)
         'instr(gpad_fold(n.title || char(10) || n.body), ?) > 0',
@@ -324,7 +330,6 @@ class NoteStore {
     final trashedLast = "n.status = '${NoteStatus.trashed.name}'";
 
     if (indexed.isEmpty) {
-      if (short.isEmpty) return const [];
       final titleMatches = [
         for (final _ in short) 'instr(gpad_fold(n.title), ?) > 0',
       ].join(' OR ');
@@ -414,7 +419,8 @@ class NoteStore {
     for (final word in words) {
       final at = folded.indexOf(word);
       if (at < 0) continue;
-      var end = sources[at + word.length - 1] + 1;
+      final last = sources[at + word.length - 1];
+      var end = last + charWidthAt(text, last);
       // Keep accents typed as separate marks with their letter.
       while (end < text.length && isCombiningMark(text.codeUnitAt(end))) {
         end++;

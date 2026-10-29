@@ -15,6 +15,18 @@ String foldForSearch(String text, [List<int>? sources]) {
       sources?.add(i);
       continue;
     }
+    if (_isPair(text, i)) {
+      // Outside the BMP, SQLite only folds the Deseret capitals.
+      var rune =
+          0x10000 + ((unit - 0xd800) << 10) + text.codeUnitAt(i + 1) - 0xdc00;
+      if (rune >= 0x10400 && rune <= 0x10427) rune += 40;
+      for (final folded in String.fromCharCode(rune).codeUnits) {
+        out.add(folded);
+        sources?.add(i);
+      }
+      i++;
+      continue;
+    }
     // Lowercasing can add a combining mark: İ becomes i and a dot.
     for (final lower in String.fromCharCode(unit).toLowerCase().codeUnits) {
       var folded = switch (lower) {
@@ -23,13 +35,22 @@ String foldForSearch(String text, [List<int>? sources]) {
         _ => lower,
       };
       folded = _caseFolds[folded] ?? folded;
-      if (isCombiningMark(folded)) continue;
+      if (_droppedAccents.contains(folded)) continue;
       out.add(folded);
       sources?.add(i);
     }
   }
   return String.fromCharCodes(out);
 }
+
+/// How many code units the character at [index] of [text] takes: two for
+/// one outside the BMP, written as a surrogate pair.
+int charWidthAt(String text, int index) => _isPair(text, index) ? 2 : 1;
+
+bool _isPair(String text, int i) =>
+    text.codeUnitAt(i) & 0xfc00 == 0xd800 &&
+    i + 1 < text.length &&
+    text.codeUnitAt(i + 1) & 0xfc00 == 0xdc00;
 
 /// Where Unicode case folding, which SQLite uses, differs from Dart's
 /// lowercasing: letters with two lower case forms, like the Greek final
@@ -71,6 +92,15 @@ const _caseFolds = {
 /// Whether [unit] is one of the accents that combine with the letter before
 /// it, as in text typed on a Mac: `e` followed by U+0301 for `é`.
 bool isCombiningMark(int unit) => unit >= 0x300 && unit <= 0x36f;
+
+/// The combining accents SQLite ignores when they are typed apart from
+/// their letter: the ones Latin letters with accents are made of. Others,
+/// like the combining overline, are kept, there and here.
+const _droppedAccents = {
+  0x300, 0x301, 0x302, 0x303, 0x304, 0x306, 0x307, 0x308, 0x309, 0x30a, //
+  0x30b, 0x30c, 0x30f, 0x311, 0x31b, 0x323, 0x324, 0x325, 0x326, 0x327, //
+  0x328, 0x32d, 0x32e, 0x330, 0x331,
+};
 
 // Generated from the Unicode decompositions: each letter that is a base
 // letter plus accents becomes that base letter, in lower case, except ten

@@ -267,6 +267,10 @@ void main() {
       expect(ids('motor öl'), ['oil']);
       expect(ids('crème FE'), ['menu']);
       expect(ids('crème öl'), isEmpty);
+      // An accent typed apart doesn't make a word long enough for the index.
+      expect(ids('fe\u0301'), unorderedEquals(['menu', 'sql']));
+      expect(ids('cre\u0300me fe\u0301'), ['menu']);
+      expect(ids('\u0301'), isEmpty);
     });
 
     test('marks short words where they are, however they were written', () {
