@@ -111,6 +111,21 @@ jobs:
         const ModeGuess.code('yaml'),
       );
     });
+
+    test('a diff', () {
+      expect(
+        detector.detect('''
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,3 +1,3 @@
+ void main() {
+-  print('hello');
++  print('hello, GPad');
+ }
+'''),
+        const ModeGuess.code('diff'),
+      );
+    });
   });
 
   group('rich', () {
@@ -122,6 +137,17 @@ jobs:
 - Book the train
 - Pack the **good** charger
 '''),
+        const ModeGuess.rich(),
+      );
+    });
+
+    test('a list under a heading line is a list, not a diff', () {
+      expect(
+        detector.detect('Grocery list\n- oat milk\n- crème fraîche\n- lemons'),
+        const ModeGuess.rich(),
+      );
+      expect(
+        detector.detect('Pros and cons\n+ cheap\n+ fast\n- noisy'),
         const ModeGuess.rich(),
       );
     });

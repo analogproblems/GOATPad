@@ -80,7 +80,11 @@ class ModeDetector {
     final markdownSigns = _markdownSigns(sample);
     if (markdownSigns >= 2) return const ModeGuess.rich();
 
-    final auto = _highlight.highlightAuto(sample, [...languages, 'markdown']);
+    final auto = _highlight.highlightAuto(sample, [
+      for (final language in languages)
+        if (language != 'diff' || _diffHeader.hasMatch(sample)) language,
+      'markdown',
+    ]);
     final language = auto.language;
     if (language != null &&
         language != 'markdown' &&
@@ -94,6 +98,13 @@ class ModeDetector {
     }
     return const ModeGuess.plain();
   }
+
+  /// highlight.js scores any list of "- " lines as a diff, so a diff only
+  /// counts with a hunk or file header, as `git diff` and `diff -u` write.
+  static final _diffHeader = RegExp(
+    r'^(@@ -\d|--- \S|\+\+\+ \S|diff |Index: )',
+    multiLine: true,
+  );
 
   static final _jsonOpening = RegExp(
     r'^[\[{]\s*("|[\[{\]}]|-?\d|true\b|false\b|null\b)',

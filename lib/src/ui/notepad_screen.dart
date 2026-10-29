@@ -229,7 +229,8 @@ class NotepadScreen extends StatelessWidget {
           ],
           const Spacer(),
           Text(
-            '$lines lines · ${note.text.length} characters',
+            '${_count(lines, 'line')} · '
+            '${_count(note.text.length, 'character')}',
             style: small?.copyWith(color: theme.colorScheme.outline),
           ),
         ],
@@ -257,3 +258,6 @@ class NotepadScreen extends StatelessWidget {
     );
   }
 }
+
+/// "1 line", "2 lines".
+String _count(int n, String noun) => '$n ${n == 1 ? noun : '${noun}s'}';

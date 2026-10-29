@@ -81,8 +81,12 @@ paste into a new note:
 3. Two or more kinds of Markdown syntax (headings, lists, links, fences,
    bold, quotes, tasks): Rich.
 4. `highlightAuto` over ~20 common languages scores at least 3 and the text
-   does not read as prose: Code in that language.
-5. Otherwise: Plain.
+   does not read as prose: Code in that language. Diff only counts when
+   there is a hunk or file header (`@@`, `---`, `+++`), because
+   highlight.js scores any list of `- ` lines as a diff.
+5. One kind of Markdown syntax, and Markdown is the best language guess:
+   Rich. That catches a short list with a title line above it.
+6. Otherwise: Plain.
 
 Language detection scans only the first 8,000 characters, and exact JSON
 parsing is skipped above 1 MB in favor of checking how the text opens and
