@@ -252,6 +252,42 @@ void main() {
     notepad.dispose();
   });
 
+  test('search finds open, closed and trashed notes, trashed last', () {
+    final notepad = load();
+    final open = notepad.pasteAsNewNote('Groceries: milk, eggs')!;
+    final closed = notepad.pasteAsNewNote('Milk frother manual')!;
+    final trashed = notepad.pasteAsNewNote('Milkshake recipe')!;
+    notepad.close(closed);
+    notepad.trash(trashed);
+
+    final found = [for (final r in notepad.search('milk')) r.note];
+    expect(found, hasLength(3));
+    expect(found.toSet(), {open, closed, trashed});
+    expect(found.last, trashed);
+    notepad.dispose();
+  });
+
+  test('search sees typing that has not been saved yet', () {
+    fakeAsync((async) {
+      final notepad = load();
+      final note = notepad.selected!;
+      notepad.editText(note, 'a brand new thought');
+      expect(notepad.search('thought').single.note, note);
+      notepad.dispose();
+    });
+  });
+
+  test('an empty search lists the most recently edited notes', () {
+    final notepad = load();
+    final welcome = notepad.selected!;
+    now = now.add(const Duration(minutes: 1));
+    final later = notepad.pasteAsNewNote('later')!;
+    notepad.trash(notepad.pasteAsNewNote('gone')!);
+
+    expect([for (final r in notepad.search(' ')) r.note], [later, welcome]);
+    notepad.dispose();
+  });
+
   test('appearance is remembered', () {
     final notepad = load();
     notepad.appearance.value = const Appearance(

@@ -195,6 +195,27 @@ class Notepad extends ChangeNotifier {
     return open.isEmpty ? null : open.first;
   }
 
+  /// Notes whose title or text contain every word of [query], ignoring case
+  /// and accents, best match first. Open and closed notes come before
+  /// trashed ones. With no query, the notes edited most recently.
+  List<SearchResult> search(String query) {
+    if (query.trim().isEmpty) {
+      final recent = keptNotes
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return [for (final note in recent.take(20)) SearchResult(note)];
+    }
+    // Search what was typed in the last moment too.
+    flush();
+    final byId = {for (final note in _notes) note.id: note};
+    final results = [
+      for (final hit in _store.search(query))
+        if (byId[hit.noteId] case final note?)
+          SearchResult(note, title: hit.title, snippet: hit.snippet),
+    ];
+    bool trashed(SearchResult r) => r.note.status == NoteStatus.trashed;
+    return [...results.where((r) => !trashed(r)), ...results.where(trashed)];
+  }
+
   /// Why the latest changes couldn't be saved, or null if everything is
   /// saved or waiting a moment to be.
   String? get saveProblem => _saveError?.message;
@@ -682,4 +703,19 @@ class TabGroup {
 
   /// Whether the strip folds these tabs into the folder's label.
   bool get collapsed => folder?.tabsCollapsed ?? false;
+}
+
+/// A note found by [Notepad.search].
+class SearchResult {
+  SearchResult(this.note, {String? title, this.snippet})
+    : title = title == null || title.trim().isEmpty ? note.displayTitle : title;
+
+  final Note note;
+
+  /// The title, with matches between [SearchHit.markStart] and
+  /// [SearchHit.markEnd].
+  final String title;
+
+  /// Text around the match, marked the same way, if there is any.
+  final String? snippet;
 }

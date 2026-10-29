@@ -7,6 +7,7 @@ import '../notes/note.dart';
 import 'appearance_dialog.dart';
 import 'icons.dart';
 import 'menus.dart';
+import 'search_palette.dart';
 
 /// Folders and notes as a tree, then the trash.
 ///
@@ -53,6 +54,11 @@ class _SidebarState extends State<Sidebar> {
                 Text('GPad', style: theme.textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
+                  tooltip: 'Search notes (Ctrl+P)',
+                  icon: const Icon(Icons.search, size: 18),
+                  onPressed: () => showSearchPalette(context, notepad: notepad),
+                ),
+                IconButton(
                   tooltip: 'Appearance',
                   icon: const Icon(Icons.palette_outlined, size: 18),
                   onPressed: () => showAppearanceDialog(
@@ -88,7 +94,7 @@ class _SidebarState extends State<Sidebar> {
             padding: const EdgeInsets.all(12),
             child: Text(
               'Ctrl+N new note · Ctrl+Shift+V paste as new note · '
-              'Ctrl+W close tab',
+              'Ctrl+W close tab · Ctrl+P search',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.outline,
               ),

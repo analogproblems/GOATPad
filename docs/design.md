@@ -139,6 +139,16 @@ can take them over later without a rewrite.
   included, moves up to the folder it was in, and GPad asks first unless the
   folder is empty.
 
+## Search
+
+Ctrl+P (or Ctrl+Shift+F, or the magnifier in the sidebar) opens a search box
+over the editor that searches every note as you type: open, closed and
+trashed. Each result shows its title and the text around the match, with
+the matches in bold on a tint, and the note's folder and whether it is
+closed or in the trash. Up and Down pick a result, Enter opens it (a
+trashed note is restored), and Escape closes the box. With nothing typed it
+lists the notes edited most recently, so it doubles as a quick switcher.
+
 ## Themes and code colors
 
 The Appearance dialog has three independent choices:
@@ -202,8 +212,15 @@ The choices are saved with the other settings.
   level, so nothing can go missing from the sidebar.
 - **Trash.** Trashed notes are kept for 30 days and deleted the next time
   GPad starts after that. "Delete forever" and "Empty trash" ask first.
-- **Still to come in step 2:** search using SQLite FTS5 over titles and
-  text.
+- **Search.** An FTS5 index over titles and text, using the trigram
+  tokenizer so any part of a word matches, in any language and in code,
+  ignoring case and accents. Triggers keep it in step with `notes`, and
+  upgrading an older database builds it once. Every word of a query must
+  match. Words shorter than three characters, which trigrams can't index,
+  are matched by a plain scan. Notes whose title matches come first, then
+  the rest by BM25, and trashed notes last.
+- **Still to come in step 2:** keeping formatting when pasting from a web
+  page or Word (see paste detection above).
 
 ## Sync (step 3)
 
