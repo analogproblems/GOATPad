@@ -23,6 +23,7 @@ class _Installation extends Installation {
 
   final Directory dir;
   final calls = <String>[];
+  bool restartFails = false;
 
   @override
   String get kind => ReleaseManifest.appImage;
@@ -35,7 +36,10 @@ class _Installation extends Installation {
       calls.add('install ${download.readAsStringSync()}');
 
   @override
-  Future<void> restartAfterExit() async => calls.add('restart');
+  Future<void> restartAfterExit() async {
+    if (restartFails) throw const ProcessException('gpad', [], 'Access denied');
+    calls.add('restart');
+  }
 
   @override
   Future<void> finishAfterExit() async => calls.add('finish');
@@ -120,6 +124,24 @@ void main() {
     );
     // Let the save timers left by typing run out.
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('a restart that won\'t start keeps GPad open and says why', (
+    tester,
+  ) async {
+    installation.restartFails = true;
+    final (_, updater) = await pumpApp(tester, release: '9.0.0');
+    await tester.tap(find.text('Restart now'));
+    await tester.pump();
+    expect(exits, 0);
+    expect(updater.status, UpdateStatus.ready);
+    expect(find.textContaining('but it wouldn\'t start'), findsOneWidget);
+    expect(find.textContaining('Access denied'), findsOneWidget);
+
+    installation.restartFails = false;
+    await tester.tap(find.text('Restart now'));
+    await tester.pump();
+    expect(exits, 1);
   });
 
   testWidgets('later hides the notice', (tester) async {

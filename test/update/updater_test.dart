@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -258,6 +259,82 @@ void main() {
     update.dispose();
   });
 
+  group('a reply that stops part way', () {
+    /// A reply to [path] that sends its headers and then nothing more,
+    /// until it is let go of.
+    StreamController<List<int>> hold(String path, int status) {
+      final body = StreamController<List<int>>();
+      github.held[path] = (status, body);
+      return body;
+    }
+
+    test('without its body still lets the check finish', () async {
+      final missing = hold(github.manifestPath, 404);
+      final update = updater(appImage());
+      await update.check().timeout(const Duration(seconds: 5));
+      expect(update.status, UpdateStatus.upToDate);
+      expect(missing.hasListener, isFalse);
+
+      github
+        ..held.clear()
+        ..release('0.2.0', appImageRelease('new GPad'));
+      final failing = hold(
+        github.downloadPath(ReleaseManifest.signatureName),
+        500,
+      );
+      await update.check().timeout(const Duration(seconds: 5));
+      expect(update.status, UpdateStatus.failed);
+      expect(update.problem, 'GitHub answered 500');
+      expect(failing.hasListener, isFalse);
+
+      github.held.clear();
+      final gone = hold(github.downloadPath('GPad-0.2.0-x86_64.AppImage'), 404);
+      await update.check().timeout(const Duration(seconds: 5));
+      expect(update.problem, contains('GitHub answered 404'));
+      expect(gone.hasListener, isFalse);
+
+      // And the next check isn't held up by them.
+      github.held.clear();
+      await update.check();
+      expect(update.status, UpdateStatus.ready);
+      update.dispose();
+    });
+
+    test('while the disk is full stops the download', () async {
+      // Writing to /dev/full always fails as a full disk does.
+      final link = Link(p.join(dir.path, 'download'))..createSync('/dev/full');
+      final content = 'new GPad ' * 1000;
+      github.release('0.2.0', appImageRelease(content));
+      final body = hold(github.downloadPath('GPad-0.2.0-x86_64.AppImage'), 200)
+        ..add(utf8.encode(content.substring(0, 100)));
+      final update = updater(_FixedTarget(link.path));
+      await update.check().timeout(const Duration(seconds: 5));
+      expect(update.status, UpdateStatus.failed);
+      expect(update.problem, startsWith('GPad couldn\'t save the update'));
+      // It stopped asking for more.
+      expect(body.hasListener, isFalse);
+      update.dispose();
+    }, skip: File('/dev/full').existsSync() ? false : 'needs /dev/full');
+  });
+
+  test('a restart that won\'t start keeps the update ready', () async {
+    github.release('0.2.0', appImageRelease('new GPad'));
+    final installation = _FixedTarget(p.join(dir.path, 'download'))
+      ..restartFails = true;
+    final update = updater(installation);
+    await update.check();
+    expect(update.status, UpdateStatus.ready);
+
+    expect(await update.launchAfterExit(), isFalse);
+    expect(update.status, UpdateStatus.ready);
+    expect(update.problem, contains('no such program'));
+
+    installation.restartFails = false;
+    expect(await update.launchAfterExit(), isTrue);
+    expect(installation.restarts, 1);
+    update.dispose();
+  });
+
   test('checks on its own after starting, unless turned off', () async {
     github.release('0.1.0', appImageRelease('same'));
     final update = Updater(
@@ -290,4 +367,34 @@ void main() {
     expect(github.requests, isNotEmpty);
     update.dispose();
   });
+}
+
+/// Downloads to [path], takes the download as it is, and can fail to
+/// restart.
+class _FixedTarget extends Installation {
+  _FixedTarget(this.path);
+
+  final String path;
+  bool restartFails = false;
+  int restarts = 0;
+
+  @override
+  String get kind => ReleaseManifest.appImage;
+
+  @override
+  File downloadTarget(String name) => File(path);
+
+  @override
+  Future<void> install(File download) async {}
+
+  @override
+  Future<void> restartAfterExit() async {
+    if (restartFails) {
+      throw const ProcessException('gpad', [], 'no such program');
+    }
+    restarts++;
+  }
+
+  @override
+  Future<void> finishAfterExit() async {}
 }

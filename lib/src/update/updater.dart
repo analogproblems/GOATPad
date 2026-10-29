@@ -141,7 +141,8 @@ class Updater extends ChangeNotifier {
   /// The version found, once there is a newer one.
   Version? get newVersion => _newVersion;
 
-  /// Why the last check or update failed.
+  /// Why the last check or update failed, or, with one ready, why
+  /// restarting into it didn't work.
   String? get problem => _problem;
 
   /// How much of the download has come, from 0 to 1, while downloading.
@@ -278,11 +279,11 @@ class Updater extends ChangeNotifier {
         .send(http.Request('GET', url))
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 404 && missing) {
-      await response.stream.drain<void>();
+      _discard(response);
       return null;
     }
     if (response.statusCode != 200) {
-      await response.stream.drain<void>();
+      _discard(response);
       throw UpdateException('GitHub answered ${response.statusCode}');
     }
     final body = BytesBuilder(copy: false);
@@ -297,6 +298,13 @@ class Updater extends ChangeNotifier {
     return body.takeBytes();
   }
 
+  /// Lets go of a response without reading its body, which a server that
+  /// stops sending would otherwise hold the check up with.
+  static void _discard(http.StreamedResponse response) {
+    final body = response.stream.listen(null, onError: (Object _) {});
+    unawaited(body.cancel().then((_) {}, onError: (Object _) {}));
+  }
+
   /// Downloads [file], checks it is the one the manifest describes, and
   /// installs it.
   Future<void> _download(
@@ -306,23 +314,25 @@ class Updater extends ChangeNotifier {
   ) async {
     _progress = 0;
     _set(UpdateStatus.downloading);
-    final response = await _client
-        .send(http.Request('GET', source.download(version, file.name)))
-        .timeout(const Duration(seconds: 30));
-    if (response.statusCode != 200) {
-      await response.stream.drain<void>();
-      throw UpdateException(
-        'GitHub answered ${response.statusCode} for ${file.name}',
-      );
-    }
     final target = installation.downloadTarget(file.name);
-    final output = target.openWrite();
     final digest = _DigestSink();
     final hashing = sha256.startChunkedConversion(digest);
     var received = 0;
     var installed = false;
     try {
+      // Opened first, and each write awaited, so a full disk stops the
+      // download there and then.
+      final output = await target.open(mode: FileMode.writeOnly);
       try {
+        final response = await _client
+            .send(http.Request('GET', source.download(version, file.name)))
+            .timeout(const Duration(seconds: 30));
+        if (response.statusCode != 200) {
+          _discard(response);
+          throw UpdateException(
+            'GitHub answered ${response.statusCode} for ${file.name}',
+          );
+        }
         await for (final chunk in response.stream.timeout(
           const Duration(seconds: 60),
         )) {
@@ -333,7 +343,7 @@ class Updater extends ChangeNotifier {
             );
           }
           hashing.add(chunk);
-          output.add(chunk);
+          await output.writeFrom(chunk);
           _progress = received / file.size;
           _changed();
         }
@@ -368,8 +378,22 @@ class Updater extends ChangeNotifier {
   /// Restarts GPad into the update, when the person asks to.
   Future<void> restartNow() async => onRestart?.call();
 
-  /// Has the new version start once GPad has quit, which the app does next.
-  Future<void> launchAfterExit() => installation.restartAfterExit();
+  /// Has the new version start once GPad has quit, which the app does
+  /// next. False if it couldn't, saying why in [problem]: GPad stays open,
+  /// and the update stays ready to try again.
+  Future<bool> launchAfterExit() async {
+    try {
+      await installation.restartAfterExit();
+      return true;
+    } on Exception catch (e) {
+      _problem = switch (e) {
+        ProcessException(:final message) => message,
+        _ => '$e',
+      };
+      _changed();
+      return false;
+    }
+  }
 
   /// Finishes an update that is ready as GPad quits, where it can't be
   /// finished while GPad runs.

@@ -13,8 +13,9 @@ it. Make the key once, on a computer you trust, with OpenSSL:
 tool/make_update_key.sh
 ```
 
-It writes the private key to `gpad-update-signing-key.pem` and the public
-key to `tool/update_public_key.pem`. Then:
+It writes the private key to `gpad-update-signing-key.pem`, which git
+ignores, and the public key to `tool/update_public_key.pem`. It won't
+replace a key that is already there. Then:
 
 1. Add the private key as the repository secret `GPAD_UPDATE_SIGNING_KEY`
    (**Settings → Secrets and variables → Actions → New repository

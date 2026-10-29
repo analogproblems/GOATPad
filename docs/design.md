@@ -678,7 +678,8 @@ GPad runs nothing it hasn't checked against a key built into it.
   the person or their notes; the check can be turned off.
 - **Downloading.** The download for this installation must have exactly the
   size and SHA-256 the manifest gives, or it is thrown away. GPad reads no
-  more than that size.
+  more than that size, gives up on a reply that stops coming, and stops at
+  once if the disk is full.
 - **Installing**, by how GPad was installed:
   - **AppImage** (`$APPIMAGE` is set): the new file is downloaded next to the
     old one and renamed over it, which Linux allows while the old one runs.
@@ -690,9 +691,12 @@ GPad runs nothing it hasn't checked against a key built into it.
     When GPad quits, it starts the new `gpad.exe` from there with
     `--gpad-finish-update <folder> <process id> [--relaunch]`, which waits
     for the old GPad to end, moves each file it replaces into `.gpad-old`,
-    copies its own in, and puts the old ones back if any step fails. That
-    copy of GPad shows no window and opens no notes. The next start deletes
-    both folders and says if the update failed. Every later version must
+    copies its own in, and puts the old ones back if any step fails. Old
+    files that won't go back, still locked say, stay in `.gpad-old`
+    (marked by `.gpad-replacing`), and the next update puts them back
+    before it changes anything. That copy of GPad shows no window and opens
+    no notes. The next start deletes both folders, keeping `.gpad-old` while
+    files in it must go back, and says if the update failed. Every later version must
     keep taking those arguments, since the old version starts the new one
     with them.
   - **Anything else**, like the .deb (installed with admin rights) or a
@@ -701,14 +705,17 @@ GPad runs nothing it hasn't checked against a key built into it.
 - **Restarting.** Restart now quits the way Quit does, saving and uploading
   first, then starts the new version with `--gpad-updated`, which waits up
   to 30 seconds for the old one to let go of the notes instead of showing
-  its window.
+  its window. If the new version won't start, GPad stays open and says
+  so, and restarting can be tried again.
 - **The key.** Losing the private key means builds already out can't update
   to releases signed with a new one: people would download the next version
   by hand, once. A leaked key would let someone who can also publish a
   release on this repository ship an update GPad installs, so it lives only
   in the repository secret and the maintainer's own safe place. Moving to a
-  new key goes through a release signed with the old one that carries the
-  new public key.
+  new key would take a release signed with the old one that carries the
+  new public key. `tool/prepare_release.sh` can't make that yet, since it
+  checks the signature against the key the build carries, and
+  `tool/make_update_key.sh` won't replace a key that is there.
 
 ## Later
 

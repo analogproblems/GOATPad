@@ -19,6 +19,12 @@ set -eu
 private=gpad-update-signing-key.pem
 public="$(dirname "$0")/update_public_key.pem"
 [ ! -e "$private" ] || { echo "error: $private already exists" >&2; exit 1; }
+# Builds already out update only to releases signed with the key they
+# carry, so a new one would cut them off; see docs/design.md.
+[ ! -e "$public" ] || {
+  echo "error: $public already exists; GPad has a key" >&2
+  exit 1
+}
 
 umask 077
 openssl genpkey -algorithm ed25519 -out "$private"

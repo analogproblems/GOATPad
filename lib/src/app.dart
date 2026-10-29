@@ -103,7 +103,8 @@ class _GPadAppState extends State<GPadApp> {
     _quitting = true;
     try {
       if (!await _mayQuit()) return;
-      await widget.updater?.launchAfterExit();
+      // If the new version won't start, GPad stays open and says so.
+      if (!(await widget.updater?.launchAfterExit() ?? false)) return;
       await widget.tray?.remove();
       await widget.exitForGood();
     } finally {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -29,6 +30,17 @@ class FakeGitHub {
   bool badSignature = false;
   final requests = <String>[];
   Object? failWith;
+
+  /// Answers to these paths, by status: the headers come at once, and the
+  /// body only as the test adds to its controller.
+  final held = <String, (int, StreamController<List<int>>)>{};
+
+  /// Where GPad asks for the newest manifest, and for the newest release's
+  /// [name].
+  String get manifestPath =>
+      '/$repository/releases/latest/download/${ReleaseManifest.fileName}';
+  String downloadPath(String name) =>
+      '/$repository/releases/download/v$version/$name';
 
   UpdateSource get source =>
       UpdateSource(repository: repository, publicKey: keys.publicKey);
@@ -67,10 +79,21 @@ class FakeGitHub {
     );
   }
 
-  late final client = MockClient((request) async {
+  late final client = MockClient.streaming((request, _) async {
     requests.add(request.url.path);
     if (failWith case final error?) throw error;
-    final path = request.url.path;
+    if (held[request.url.path] case (final status, final body)) {
+      return http.StreamedResponse(body.stream, status);
+    }
+    final response = _answer(request.url.path);
+    return http.StreamedResponse(
+      Stream.value(response.bodyBytes),
+      response.statusCode,
+      contentLength: response.bodyBytes.length,
+    );
+  });
+
+  http.Response _answer(String path) {
     final base = '/$repository/releases';
     final version = this.version;
     if (version == null) return http.Response('Not Found', 404);
@@ -86,5 +109,5 @@ class FakeGitHub {
     return body == null
         ? http.Response('Not Found', 404)
         : http.Response.bytes(body, 200);
-  });
+  }
 }

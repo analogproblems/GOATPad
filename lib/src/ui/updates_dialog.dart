@@ -29,14 +29,21 @@ String updateSummary(Updater updater) {
     UpdateStatus.downloading =>
       'Downloading GPad $version… '
           '${((updater.progress ?? 0) * 100).floor()}%',
-    UpdateStatus.ready =>
-      'GPad $version is ready. It starts when you restart GPad.',
+    UpdateStatus.ready => _ready(updater),
     UpdateStatus.available =>
       'GPad $version is out. This copy of GPad was installed in a way it '
           'can\'t update itself, so download it from its release page.',
     UpdateStatus.failed => 'GPad couldn\'t update: ${updater.problem}.',
   };
 }
+
+String _ready(Updater updater) => switch (updater.problem) {
+  null =>
+    'GPad ${updater.newVersion} is ready. It starts when you restart GPad.',
+  final problem =>
+    'GPad ${updater.newVersion} is ready, but it wouldn\'t start '
+        '($problem). Try again, or quit GPad and start it yourself.',
+};
 
 /// Opens [url] in the browser.
 void _open(Uri url) => unawaited(
@@ -148,10 +155,7 @@ class UpdateNotice extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                ready
-                    ? 'GPad ${updater.newVersion} is ready. It starts when '
-                          'you restart GPad.'
-                    : 'GPad ${updater.newVersion} is out.',
+                ready ? _ready(updater) : 'GPad ${updater.newVersion} is out.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: scheme.onSecondaryContainer,
                 ),

@@ -50,10 +50,11 @@ abstract class Installation {
   Future<void> install(File download);
 
   /// Starts the new GPad once this one has quit, for restarting now.
+  /// Throws if it can't, and can be tried again.
   Future<void> restartAfterExit();
 
   /// Finishes an installed update as GPad quits, for an installation that
-  /// can't while GPad runs.
+  /// can't while GPad runs. Never throws, so quitting goes on.
   Future<void> finishAfterExit();
 
   static bool _mayWrite(String dir) {
@@ -137,7 +138,8 @@ const updatedArgument = '--gpad-updated';
 /// version is unzipped into a folder inside, `.gpad-update`. As GPad quits,
 /// it starts the new `gpad.exe` from there with [finishArgument], which
 /// waits for the old GPad to be gone, moves the old files aside, copies the
-/// new ones in, and puts the old ones back if that fails.
+/// new ones in, and puts the old ones back if that fails. Old files that
+/// won't go back are kept, and the next update puts them back first.
 class WindowsFolderInstallation extends Installation {
   WindowsFolderInstallation(this.dir);
 
@@ -147,6 +149,14 @@ class WindowsFolderInstallation extends Installation {
   static const stagingName = '.gpad-update';
   static const oldName = '.gpad-old';
   static const failureName = '.gpad-update-failed';
+
+  /// There while files are being replaced, and after, if some old files in
+  /// [oldName] couldn't be put back: they are kept until they are.
+  static const replacingName = '.gpad-replacing';
+
+  /// How long to wait before trying a file again, doubled each time.
+  @visibleForTesting
+  static Duration retryPause = const Duration(milliseconds: 200);
 
   /// Asks the new `gpad.exe` to finish installing: followed by the folder,
   /// the old GPad's process id and, to start GPad again after,
@@ -191,27 +201,37 @@ class WindowsFolderInstallation extends Installation {
   }
 
   @override
-  Future<void> restartAfterExit() => _finishAfterExit(relaunch: true);
+  Future<void> restartAfterExit() => _startFinishing(relaunch: true);
 
+  /// If the new `gpad.exe` won't start, says so on the next start, which
+  /// downloads the update again.
   @override
-  Future<void> finishAfterExit() => _finishAfterExit(relaunch: false);
+  Future<void> finishAfterExit() async {
+    try {
+      await _startFinishing(relaunch: false);
+    } on Exception catch (e) {
+      await _writeFailure(dir, 'GPad couldn\'t start the update ($e)');
+    }
+  }
 
-  Future<void> _finishAfterExit({required bool relaunch}) async {
+  Future<void> _startFinishing({required bool relaunch}) async {
     if (!_isStaged) return;
-    _isStaged = false;
     await Process.start(p.join(_staged.path, 'gpad.exe'), [
       finishArgument,
       dir,
       '$pid',
       if (relaunch) relaunchArgument,
     ], mode: ProcessStartMode.detached);
+    // Only once it has started: until then, quitting tries again.
+    _isStaged = false;
   }
 
-  /// Deletes what an earlier update left: the old files, and the staging
-  /// folder, which the new GPad ran from. Returns why the last update
-  /// failed, if it did.
+  /// Deletes what an earlier update left: the old files, unless some must
+  /// still go back, and the staging folder, which the new GPad ran from.
+  /// Returns why the last update failed, if it did.
   static Future<String?> cleanUp(String dir) async {
-    for (final name in [oldName, stagingName]) {
+    final keepOld = File(p.join(dir, replacingName)).existsSync();
+    for (final name in [if (!keepOld) oldName, stagingName]) {
       try {
         await Directory(p.join(dir, name)).delete(recursive: true);
       } on FileSystemException {
@@ -219,12 +239,26 @@ class WindowsFolderInstallation extends Installation {
       }
     }
     final failure = File(p.join(dir, failureName));
+    String? reason;
     try {
-      final reason = await failure.readAsString();
+      reason = await failure.readAsString();
       await failure.delete();
-      return reason;
     } on FileSystemException {
-      return null;
+      // No failure to tell.
+    }
+    if (keepOld) {
+      reason =
+          '${reason ?? 'it stopped part way'}. Some of GPad\'s earlier files '
+          'are kept in $oldName, and the next update puts them back first';
+    }
+    return reason;
+  }
+
+  static Future<void> _writeFailure(String dir, String reason) async {
+    try {
+      await File(p.join(dir, failureName)).writeAsString(reason);
+    } on FileSystemException {
+      // Nowhere to say so.
     }
   }
 
@@ -240,11 +274,7 @@ class WindowsFolderInstallation extends Installation {
           Directory(p.join(dir, stagingName, _zipFolder)),
         );
       } on Object catch (e) {
-        try {
-          await File(p.join(dir, failureName)).writeAsString('$e');
-        } on FileSystemException {
-          // Nowhere to say so.
-        }
+        await _writeFailure(dir, '$e');
       }
       if (rest.contains(relaunchArgument)) {
         await Process.start(p.join(dir, 'gpad.exe'), const [
@@ -256,16 +286,24 @@ class WindowsFolderInstallation extends Installation {
 
   /// Copies every file in [staged] into [dir], moving the file each
   /// replaces into the old files folder first. If any step fails, takes
-  /// the copies away and puts the old files back, and throws.
+  /// the copies away and puts the old files back, and throws. Old files
+  /// that won't go back stay in the old files folder, marked to be put
+  /// back before the next update changes anything.
   @visibleForTesting
   static Future<void> replaceFiles(
     String dir,
     Directory staged, {
     Future<void> Function(File from, String to)? copy,
+    Future<void> Function(File from, String to)? move,
   }) async {
     final old = Directory(p.join(dir, oldName));
-    if (old.existsSync()) await old.delete(recursive: true);
+    final replacing = File(p.join(dir, replacingName));
     final copyFile = copy ?? (from, to) => from.copy(to);
+    final moveFile = move ?? (from, to) => from.rename(to);
+    if (replacing.existsSync()) await _putBack(dir, moveFile);
+    if (old.existsSync()) await old.delete(recursive: true);
+    // Written first, so the old files outlive even a crash part way.
+    await replacing.writeAsString('');
     final moved = <String>[];
     final copied = <String>[];
     try {
@@ -278,7 +316,7 @@ class WindowsFolderInstallation extends Installation {
         if (target.existsSync()) {
           final aside = p.join(old.path, relative);
           await Directory(p.dirname(aside)).create(recursive: true);
-          await _retry(() => target.rename(aside));
+          await _retry(() => moveFile(target, aside));
           moved.add(relative);
         }
         await target.parent.create(recursive: true);
@@ -293,15 +331,52 @@ class WindowsFolderInstallation extends Installation {
           // Left over; the old file going back replaces it below.
         }
       }
+      var allBack = true;
       for (final relative in moved) {
         try {
-          await File(p.join(old.path, relative)).rename(p.join(dir, relative));
-        } on FileSystemException {
-          // Still in the old files folder, at least.
+          await _retry(
+            () => moveFile(
+              File(p.join(old.path, relative)),
+              p.join(dir, relative),
+            ),
+          );
+        } on Object {
+          // Kept in the old files folder, for the next update.
+          allBack = false;
         }
       }
+      if (allBack) await _deleteIfThere(replacing);
       rethrow;
     }
+    await _deleteIfThere(replacing);
+  }
+
+  static Future<void> _deleteIfThere(File file) async {
+    try {
+      await file.delete();
+    } on FileSystemException {
+      // Gone already.
+    }
+  }
+
+  /// Puts back the old files a failed update left in the old files folder.
+  /// Throws, changing nothing more, if some still won't go back.
+  static Future<void> _putBack(
+    String dir,
+    Future<void> Function(File from, String to) move,
+  ) async {
+    final old = Directory(p.join(dir, oldName));
+    if (old.existsSync()) {
+      final files = old
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>();
+      for (final file in files) {
+        final target = p.join(dir, p.relative(file.path, from: old.path));
+        await Directory(p.dirname(target)).create(recursive: true);
+        await _retry(() => move(file, target));
+      }
+    }
+    await File(p.join(dir, replacingName)).delete();
   }
 
   /// Runs [step], trying again for a moment if it fails, as when a virus
@@ -313,7 +388,7 @@ class WindowsFolderInstallation extends Installation {
         return;
       } on FileSystemException {
         if (attempt == 6) rethrow;
-        await Future<void>.delayed(Duration(milliseconds: 100 << attempt));
+        await Future<void>.delayed(retryPause * (1 << (attempt - 1)));
       }
     }
   }

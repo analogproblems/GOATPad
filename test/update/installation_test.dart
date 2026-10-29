@@ -153,7 +153,116 @@ void main() {
       expect(read('gpad.exe'), 'old exe');
       expect(read('data/app.so'), 'old app');
       expect(File(p.join(dir.path, 'zz_new.dll')).existsSync(), isFalse);
+      // All back, so nothing is kept for the next start.
+      expect(
+        File(p.join(dir.path, WindowsFolderInstallation.replacingName))
+            .existsSync(),
+        isFalse,
+      );
     });
+
+    group('old files that won\'t go back', () {
+      setUp(() => WindowsFolderInstallation.retryPause = Duration.zero);
+      tearDown(
+        () => WindowsFolderInstallation.retryPause = const Duration(
+          milliseconds: 200,
+        ),
+      );
+
+      Directory stage() {
+        write('.gpad-update/GPad/data/app.so', 'new app');
+        write('.gpad-update/GPad/gpad.exe', 'new exe');
+        return Directory(p.join(dir.path, '.gpad-update', 'GPad'));
+      }
+
+      /// Moves as GPad does, except putting back gpad.exe while [stuck].
+      var stuck = true;
+      Future<void> move(File from, String to) async {
+        if (stuck &&
+            p.basename(to) == 'gpad.exe' &&
+            from.path.contains('.gpad-old')) {
+          throw const FileSystemException('In use');
+        }
+        await from.rename(to);
+      }
+
+      Future<void> failToUpdate() => expectLater(
+        WindowsFolderInstallation.replaceFiles(
+          dir.path,
+          stage(),
+          copy: (from, to) async {
+            if (p.basename(to) == 'gpad.exe') throw StateError('Disk full');
+            await from.copy(to);
+          },
+          move: move,
+        ),
+        throwsStateError,
+      );
+
+      test('are kept, and put back by the next update', () async {
+        stuck = true;
+        write('gpad.exe', 'old exe');
+        write('data/app.so', 'old app');
+        await failToUpdate();
+        expect(read('data/app.so'), 'old app');
+        expect(read('.gpad-old/gpad.exe'), 'old exe');
+
+        // The next start keeps them, and says where.
+        expect(
+          await WindowsFolderInstallation.cleanUp(dir.path),
+          contains('kept in .gpad-old'),
+        );
+        expect(read('.gpad-old/gpad.exe'), 'old exe');
+
+        // Still stuck: the next update changes nothing.
+        await expectLater(
+          WindowsFolderInstallation.replaceFiles(dir.path, stage(), move: move),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(read('data/app.so'), 'old app');
+        expect(read('.gpad-old/gpad.exe'), 'old exe');
+
+        // Free again: they go back, then the update goes in.
+        stuck = false;
+        await WindowsFolderInstallation.replaceFiles(
+          dir.path,
+          stage(),
+          move: move,
+        );
+        expect(read('gpad.exe'), 'new exe');
+        expect(read('data/app.so'), 'new app');
+        expect(read('.gpad-old/gpad.exe'), 'old exe');
+        expect(await WindowsFolderInstallation.cleanUp(dir.path), isNull);
+        expect(files(), ['data/app.so', 'gpad.exe']);
+      });
+    });
+
+    test('an update that won\'t start can be started again', () async {
+      final installation = WindowsFolderInstallation(dir.path);
+      // Unzipped files aren't runnable on Linux, as if Windows refused it.
+      await installation.install(
+        zip({'GPad/gpad.exe': '#!/bin/sh\necho "\$@" > "\$0.ran"\n'}),
+      );
+      final staged = p.join(dir.path, '.gpad-update', 'GPad', 'gpad.exe');
+      await expectLater(
+        installation.restartAfterExit(),
+        throwsA(isA<ProcessException>()),
+      );
+      // Quitting tries again, and keeps why it couldn't for the next start.
+      await installation.finishAfterExit();
+      expect(read('.gpad-update-failed'), contains('couldn\'t start'));
+
+      Process.runSync('chmod', ['755', staged]);
+      await installation.restartAfterExit();
+      final ran = File('$staged.ran');
+      for (var i = 0; i < 50 && !ran.existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(
+        ran.readAsStringSync().trim(),
+        '--gpad-finish-update ${dir.path} $pid --relaunch',
+      );
+    }, skip: Platform.isLinux ? false : 'Linux only');
 
     test('a failure is kept for the next start to tell', () async {
       write('gpad.exe', 'old exe');

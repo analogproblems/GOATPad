@@ -47,3 +47,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# The update signing key tool/make_update_key.sh makes, which must never be
+# committed. See docs/releasing.md.
+gpad-update-signing-key.pem
