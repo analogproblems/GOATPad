@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/widgets.dart';
 
 import 'src/app.dart';
 import 'src/notepad/notepad.dart';
 import 'src/store/data_location.dart';
+import 'src/store/instance_door.dart';
 import 'src/store/note_store.dart';
 import 'src/sync/sync_controller.dart';
+import 'src/ui/tray.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +18,9 @@ Future<void> main() async {
     path = await notesDatabasePath();
     notepad = Notepad.load(NoteStore.open(path));
   } on StoreLockedException {
+    // Perhaps in the tray: bring that GPad's window back instead.
+    await Tray.allowOthersToFront();
+    if (await InstanceDoor.knock(File(path!).parent.path)) exit(0);
     runApp(
       const StartupProblemApp(
         title: 'GPad is already open',
@@ -33,8 +40,10 @@ Future<void> main() async {
     return;
   }
   final sync = SyncController(notepad);
-  runApp(GPadApp(notepad: notepad, sync: sync));
+  final tray = Tray(sync);
+  runApp(GPadApp(notepad: notepad, sync: sync, tray: tray));
+  await InstanceDoor.open(File(path).parent.path, onKnock: tray.showWindow);
   // After the window is up: reading the keychain can take a moment, or
   // wait for the person to unlock it.
-  await sync.start();
+  await Future.wait([sync.start(), tray.start()]);
 }

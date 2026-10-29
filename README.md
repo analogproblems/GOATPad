@@ -22,7 +22,7 @@ that Dropbox, OneDrive, Nextcloud or Syncthing keeps in step.
 | --- | --- | --- |
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
-| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (sync folder, Google Drive and passphrase changes done; tray sync next) |
+| 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (all built: sync folder, Google Drive, passphrase changes, tray sync; a real two-computer Google Drive check is next) |
 | 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
@@ -88,6 +88,13 @@ that unlocks them (not your passphrase) in the system keychain (GNOME Keyring
 or KWallet on Linux, Credential Manager on Windows); otherwise it asks for the
 passphrase each time it starts. GPad's Google sign-in goes in the keychain
 too; without one, GPad asks you to sign in again after each start.
+
+To keep syncing while the window is closed, tick **Keep syncing in the
+tray when the window is closed** in the sync window. Closing the window then
+leaves GPad in the system tray, and you quit from the tray icon's menu. On
+Linux this needs a desktop with a tray (KDE, Xfce, Cinnamon, MATE, Ubuntu;
+plain GNOME needs the AppIndicator extension) and libayatana-appindicator,
+which the .deb asks for.
 
 To change your passphrase, or replace a recovery key that may have been
 seen, click the sync line in the sidebar and choose **Change passphrase…**

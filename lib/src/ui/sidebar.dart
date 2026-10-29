@@ -10,6 +10,7 @@ import 'icons.dart';
 import 'menus.dart';
 import 'search_palette.dart';
 import 'sync_dialog.dart';
+import 'tray.dart';
 
 /// Folders and notes as a tree, then the trash.
 ///
@@ -17,13 +18,16 @@ import 'sync_dialog.dart';
 /// onto the NOTES heading or the empty space below the tree to move them to
 /// the top level.
 class Sidebar extends StatefulWidget {
-  const Sidebar({super.key, required this.notepad, this.sync});
+  const Sidebar({super.key, required this.notepad, this.sync, this.tray});
 
   final Notepad notepad;
 
   /// Sync, whose state shows at the bottom. Null in tests that don't need
   /// it.
   final SyncController? sync;
+
+  /// The tray icon, whose setting is in the sync window.
+  final Tray? tray;
 
   @override
   State<Sidebar> createState() => _SidebarState();
@@ -139,7 +143,7 @@ class _SidebarState extends State<Sidebar> {
             summary.label,
             style: theme.textTheme.bodySmall?.copyWith(color: color),
           ),
-          onTap: () => showSyncDialog(context, sync),
+          onTap: () => showSyncDialog(context, sync, tray: widget.tray),
         );
       },
     );

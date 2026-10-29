@@ -318,8 +318,9 @@ doesn't care where the files live. Step 3 ships it in three parts:
    [Google Drive](#google-drive) below).
 3. **Changing the passphrase and making a new recovery key (built),** from
    the sync window; see [Changing the passphrase or recovery
-   key](#changing-the-passphrase-or-recovery-key). Still to come: syncing
-   from the tray while the window is closed.
+   key](#changing-the-passphrase-or-recovery-key). **Syncing from the tray
+   while the window is closed (built),** if you turn it on; see
+   [The tray](#the-tray).
 
 ### What syncs
 
@@ -466,6 +467,32 @@ when the window comes back into focus, and once more before it quits (giving
 up after 5 seconds, since the changes are kept for next time). Turning
 sync off, or setting it up again, stops a round under way once the file it
 is reading or writing is done, before it uses the key or records anything.
+
+### The tray
+
+With **Keep syncing in the tray when the window is closed** ticked in the
+sync window (off by default), closing the window saves what you typed,
+starts uploading it, and hides the window instead of quitting. Sync goes
+on in the background as above, so the notes from your other computers are
+already there when you come back. The tray icon's menu shows how sync is
+going and has **Open GPad**, **Sync now** and **Quit GPad**; quitting
+uploads what is waiting first, as closing the window does without the
+tray. The setting only applies while sync is set up: with sync off,
+closing the window quits.
+
+The runner draws the icon. On Linux that is libayatana-appindicator (or
+the older libappindicator), loaded at run time so GPad still starts
+without it. It is used only if a StatusNotifierWatcher on the session bus
+says a tray host is there; KDE, Xfce, Cinnamon, MATE and Ubuntu's GNOME
+have one, and plain GNOME needs the AppIndicator extension. Without one the
+setting is greyed out. On Windows it is the notification area.
+
+Starting GPad again while it runs (from the tray or not) brings its window
+back rather than saying GPad is already open. The running GPad listens on
+a loopback port it writes, with a random token, to `gpad.instance` next to
+`notes.db`; the second one knocks with the token and quits. A knock can
+only show the window. Two GPads on different data folders keep their own
+notes and windows, as before.
 
 Before each round, GPad checks that `gpad-vault.json` is still there and is
 the same vault. If the folder is missing (a USB drive that isn't plugged in,

@@ -6,6 +6,7 @@ import '../notes/mode_detector.dart';
 import '../notes/note.dart';
 import '../notes/note_mode.dart';
 import '../sync/sync_controller.dart';
+import 'tray.dart';
 import 'clipboard_html.dart';
 import 'note_editors.dart';
 import 'search_palette.dart';
@@ -15,10 +16,11 @@ import 'tab_strip.dart';
 /// The main window: folders and notes in the sidebar, tabs, the editor and a
 /// status bar.
 class NotepadScreen extends StatelessWidget {
-  const NotepadScreen({super.key, required this.notepad, this.sync});
+  const NotepadScreen({super.key, required this.notepad, this.sync, this.tray});
 
   final Notepad notepad;
   final SyncController? sync;
+  final Tray? tray;
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +73,7 @@ class NotepadScreen extends StatelessWidget {
                 children: [
                   SizedBox(
                     width: 240,
-                    child: Sidebar(notepad: notepad, sync: sync),
+                    child: Sidebar(notepad: notepad, sync: sync, tray: tray),
                   ),
                   const VerticalDivider(width: 1),
                   Expanded(
