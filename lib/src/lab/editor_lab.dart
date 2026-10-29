@@ -491,7 +491,7 @@ class _Tab extends StatelessWidget {
 const _welcome = '''
 # Welcome to the editor lab
 
-This is the **step 1 prototype**. Nothing is saved yet. Rich notes use the Quill editor, picked over Fleather here in the lab.
+This is the **step 1 prototype**. Nothing is saved yet. Rich notes use the Quill editor.
 
 ## Try this
 

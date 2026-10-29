@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>GPad</title>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#C8702A"/>
+  <path d="M68 44h96l36 36v132a12 12 0 0 1-12 12H68a12 12 0 0 1-12-12V56a12 12 0 0 1 12-12z" fill="#FFFBF5"/>
+  <path d="M164 44v28a8 8 0 0 0 8 8h28z" fill="#EFE6D8"/>
+  <path d="M154 120a34 34 0 1 0 8 30h-30" fill="none" stroke="#3B3128" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M84 196h88" stroke="#E39A55" stroke-width="10" stroke-linecap="round"/>
+</svg>

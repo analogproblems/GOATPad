@@ -21,7 +21,7 @@ Nothing is saved yet.
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | In progress |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings | Next |
 | 3. Encrypted sync | Google Drive and sync-folder backends, end-to-end encryption | Planned |
-| 4. Release | Packaging and GitHub Releases | Planned |
+| 4. Release | GitHub Releases, Windows installer, Flatpak | Planned (.deb and AppImage already built by CI) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
 
@@ -47,8 +47,22 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 4. Open **Appearance** (the palette button) to try the themes and code
    colors.
 
-Windows and Linux builds from CI are attached to each run under
-**Actions → CI → Artifacts**.
+## Download a test build
+
+Builds from CI are attached to each run under **Actions → CI → Artifacts**.
+GitHub wraps each one in a zip, so unzip it first.
+
+- **Windows:** `gpad-windows-x64`. Unzip and run `gpad.exe`. No installer or
+  admin rights needed.
+- **Debian or Ubuntu:** `gpad-linux-deb`. Install with
+  `sudo apt install ./gpad_0.1.0_amd64.deb`, then open GPad from the app menu
+  or run `gpad`.
+- **Any Linux (AppImage):** `gpad-linux-appimage`. Make it executable with
+  `chmod +x GPad-0.1.0-x86_64.AppImage` and run it. If it says FUSE is
+  missing, install `fuse3` or start it with `--appimage-extract-and-run`.
+
+The Linux builds need GTK 3 and glibc 2.34 or newer (Ubuntu 22.04, Debian 12,
+Fedora 35 or later).
 
 ## Build from source
 
@@ -67,6 +81,13 @@ Then:
 flutter pub get
 flutter test
 flutter run -d linux     # or: flutter run -d windows
+```
+
+To build the Linux packages yourself:
+
+```sh
+flutter build linux --release
+linux/packaging/package.sh   # writes the .deb and AppImage to dist/
 ```
 
 ## License

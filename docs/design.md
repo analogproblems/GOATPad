@@ -209,7 +209,12 @@ GPad does not protect against:
   many machines (including the first one we tried) don't have them.
   Unsigned builds show a SmartScreen warning on first run; code signing costs
   money and can come later.
-- Linux: AppImage first, then Flatpak and .deb.
+- Linux: a .deb (installs to `/opt/gpad`, with a `gpad` command and a menu
+  entry) and an AppImage (one file, runs on most distributions without
+  installing). CI builds both with `linux/packaging/package.sh`. The tools
+  that build the AppImage are pinned and checked against their SHA-256.
+  Builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35 or
+  later) and GTK 3. Flatpak can come later.
 - GitHub Releases built by CI. No telemetry.
 
 ## Later

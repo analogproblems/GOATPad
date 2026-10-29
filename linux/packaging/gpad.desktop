@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GPad
+GenericName=Notepad
+Comment=A notepad that keeps everything you paste
+Exec=gpad
+Icon=gpad
+Terminal=false
+Categories=Utility;TextEditor;
+Keywords=notes;notepad;editor;text;code;
+StartupWMClass=gpad
