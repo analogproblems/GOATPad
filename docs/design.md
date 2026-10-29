@@ -213,8 +213,12 @@ GPad does not protect against:
   entry) and an AppImage (one file, runs on most distributions without
   installing). CI builds both with `linux/packaging/package.sh`. The tools
   that build the AppImage are pinned and checked against their SHA-256.
-  Builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35 or
-  later) and GTK 3. Flatpak can come later.
+  CI builds them in an Ubuntu 22.04 container: a binary only runs on
+  systems at least as new as the one it was built on (built on 24.04, it
+  wouldn't start on 22.04 or Debian 12). `linux/packaging/smoke_test.sh`
+  then installs and starts both packages in clean Ubuntu 22.04 and 24.04,
+  Debian 12 and Fedora containers. Both use the system's GTK 3 and EGL.
+  Flatpak can come later.
 - GitHub Releases built by CI. No telemetry.
 
 ## Later

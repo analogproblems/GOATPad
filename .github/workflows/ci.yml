@@ -35,12 +35,19 @@ jobs:
     name: Build Linux
     needs: test
     runs-on: ubuntu-latest
+    # Built on the oldest distribution we support. The binary takes its glibc
+    # and GLib symbol versions from the build machine, so it runs there and on
+    # anything newer. Built on 24.04, it fails to start on 22.04 or Debian 12.
+    container: ubuntu:22.04
     steps:
-      - uses: actions/checkout@v4
       - name: Install desktop build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git unzip xz-utils zip file jq dpkg-dev \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -66,6 +73,29 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
           retention-days: 14
+
+  smoke-linux:
+    name: Launch on ${{ matrix.image }}
+    needs: build-linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:22.04, ubuntu:24.04, debian:12, fedora:latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gpad-linux-deb
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: gpad-linux-appimage
+          path: dist
+      - name: Install and launch in a clean ${{ matrix.image }} container
+        run: >
+          docker run --rm -v "$PWD:/src" -w /src ${{ matrix.image }}
+          sh linux/packaging/smoke_test.sh dist
 
   build-windows:
     name: Build Windows

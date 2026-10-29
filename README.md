@@ -61,8 +61,8 @@ GitHub wraps each one in a zip, so unzip it first.
   `chmod +x GPad-0.1.0-x86_64.AppImage` and run it. If it says FUSE is
   missing, install `fuse3` or start it with `--appimage-extract-and-run`.
 
-The Linux builds need GTK 3 and glibc 2.34 or newer (Ubuntu 22.04, Debian 12,
-Fedora 35 or later).
+The Linux builds run on Ubuntu 22.04, Debian 12 and anything newer, and on
+current Fedora. CI installs and starts them on each of those.
 
 ## Build from source
 
