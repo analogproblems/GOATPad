@@ -150,11 +150,19 @@ The choices are saved with the other settings.
   pinned in the package, instead of using whatever the system has.
 - **Saved as you type.** Typing is saved at most 300 ms after a keystroke,
   even while you keep typing. Everything else (new notes, closing tabs,
-  trash, theme, the selected tab) is saved straight away, and GPad saves
-  again whenever the window loses focus or closes. Nothing ever asks "save?".
-- **Crash-safe.** The database uses SQLite's write-ahead log, so a crash or
-  power cut can cost at most the last few hundred milliseconds of typing,
-  never the file.
+  trash, theme) is saved straight away, the selected tab with the next save,
+  and GPad saves again whenever the window loses focus or closes. Nothing
+  ever asks "save?".
+- **Crash-safe.** The database uses SQLite's write-ahead log with
+  `synchronous = FULL`, so every finished save is on disk before GPad moves
+  on. A crash or power cut can cost at most the last few hundred
+  milliseconds of typing, never a finished save and never the file. Each
+  save is one transaction, so it lands whole or not at all.
+- **If saving fails** (a full disk, a failing drive), the changes stay in
+  memory, a warning stays at the top of the window until a save works, and
+  GPad tries again every 5 seconds without waiting for more typing. "Try
+  again" retries at once. Closing the window while saves are failing asks
+  first, with "Keep GPad open" as the default.
 - **One window at a time.** GPad keeps the file locked while it runs. A
   second GPad shows "GPad is already open" instead of loading the notes and
   overwriting edits made in the first window. A crashed GPad releases the

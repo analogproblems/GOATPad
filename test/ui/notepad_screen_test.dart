@@ -1,3 +1,5 @@
+import 'dart:ui' show AppExitResponse;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -9,12 +11,12 @@ import 'package:goatpad/src/store/note_store.dart';
 
 /// Starts GPad on a fresh in-memory store with the welcome note and two
 /// pasted notes open, "Shopping list" selected.
-Future<Notepad> _pumpApp(WidgetTester tester) async {
+Future<Notepad> _pumpApp(WidgetTester tester, {NoteStore? store}) async {
   tester.view.physicalSize = const Size(1280, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
-  final notepad = Notepad.load(NoteStore.inMemory());
+  final notepad = Notepad.load(store ?? NoteStore.inMemory());
   notepad.pasteAsNewNote('Groceries for the week\nmilk, eggs, bread');
   notepad.pasteAsNewNote('Shopping list\napples\npears');
   await tester.pumpWidget(GPadApp(notepad: notepad));
@@ -124,6 +126,38 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(notepad.trashedNotes, isEmpty);
     expect(find.text('TRASH (1)'), findsNothing);
+    await _finish(tester);
+  }, variant: _desktop);
+
+  testWidgets('a failing save shows a warning, and quitting asks first', (
+    tester,
+  ) async {
+    final store = NoteStore.inMemory();
+    final notepad = await _pumpApp(tester, store: store);
+    final db = store.database;
+    final pages = db.select('PRAGMA page_count').single.values.single;
+    db.execute('PRAGMA max_page_count = $pages');
+
+    notepad.editText(notepad.selected!, 'x' * 100000);
+    notepad.flush();
+    await tester.pump();
+    expect(find.textContaining('GPad can\'t save your notes'), findsOneWidget);
+
+    // Closing the window: GPad asks, and staying keeps the window open.
+    final exit = tester.binding.handleRequestAppExit();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Your latest changes aren\'t saved'), findsOneWidget);
+    await tester.tap(find.text('Keep GPad open'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(await exit, AppExitResponse.cancel);
+
+    // Once there is room again, Try again saves and the warning goes.
+    db.execute('PRAGMA max_page_count = 1000000');
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(find.textContaining('GPad can\'t save your notes'), findsNothing);
+    expect(notepad.saveProblem, isNull);
+    expect(await tester.binding.handleRequestAppExit(), AppExitResponse.exit);
     await _finish(tester);
   }, variant: _desktop);
 }

@@ -112,6 +112,37 @@ void main() {
     });
   });
 
+  test('when saving fails, the changes are kept, GPad says so and retries', () {
+    fakeAsync((async) {
+      final notepad = load();
+      final note = notepad.selected!;
+      final before = storedText(note.id);
+      var changes = 0;
+      notepad.addListener(() => changes++);
+
+      // Fill the "disk": the database may not grow any more.
+      final db = store.database;
+      final pages = db.select('PRAGMA page_count').single.values.single;
+      db.execute('PRAGMA max_page_count = $pages');
+      final big = 'x' * 100000;
+      notepad.editText(note, big);
+      async.elapse(Notepad.saveDelay);
+
+      expect(notepad.saveProblem, contains('full'));
+      expect(changes, greaterThan(1), reason: 'the screen hears about it');
+      expect(storedText(note.id), before);
+      expect(note.text, big);
+      expect(notepad.flush(), isFalse);
+
+      // Space frees up; the next retry saves without another keystroke.
+      db.execute('PRAGMA max_page_count = 1000000');
+      async.elapse(Notepad.retryDelay);
+      expect(notepad.saveProblem, isNull);
+      expect(storedText(note.id), big);
+      notepad.dispose();
+    });
+  });
+
   test('tabs, the selected tab and closed notes come back on restart', () {
     final notepad = load();
     final welcome = notepad.selected!;

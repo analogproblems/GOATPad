@@ -60,6 +60,8 @@ class NotepadScreen extends StatelessWidget {
                   Expanded(
                     child: Column(
                       children: [
+                        if (notepad.saveProblem case final problem?)
+                          _saveProblemBanner(context, problem),
                         _tabStrip(context, note),
                         const Divider(),
                         if (note == null)
@@ -126,6 +128,39 @@ class NotepadScreen extends StatelessWidget {
             onPressed: _pasteAsNewNote,
           ),
         ],
+      ),
+    );
+  }
+
+  /// Stays up while saves are failing, so nobody stops typing believing
+  /// their notes are safe.
+  Widget _saveProblemBanner(BuildContext context, String problem) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber, size: 18, color: scheme.onErrorContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'GPad can\'t save your notes ($problem). Your latest changes '
+                'are only in this window until it can. It keeps trying every '
+                'few seconds.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onErrorContainer,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: notepad.flush,
+              child: const Text('Try again'),
+            ),
+          ],
+        ),
       ),
     );
   }

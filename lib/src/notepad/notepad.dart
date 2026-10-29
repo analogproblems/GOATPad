@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
 import '../notes/mode_detector.dart';
 import '../notes/name_suggester.dart';
@@ -14,9 +15,13 @@ import 'welcome_note.dart';
 /// The notes and tabs on this machine, saved as they change.
 ///
 /// Typing is saved at most [saveDelay] after the keystroke, and everything
-/// else (new notes, closing, trashing, switching tabs) right away. Nothing
-/// ever asks to save. The app calls [flush] before it exits, to write the
-/// last few keystrokes.
+/// else (new notes, closing, trashing) right away. Nothing ever asks to
+/// save. The app calls [flush] before it exits, to write the last few
+/// keystrokes.
+///
+/// If a save fails, say because the disk is full, the changes stay in
+/// memory, [saveProblem] says why, and GPad tries again every [retryDelay]
+/// until a save works.
 class Notepad extends ChangeNotifier {
   Notepad._(
     this._store,
@@ -73,6 +78,7 @@ class Notepad extends ChangeNotifier {
   }
 
   static const saveDelay = Duration(milliseconds: 300);
+  static const retryDelay = Duration(seconds: 5);
   static const trashKeptFor = Duration(days: 30);
 
   static const _welcomedKey = 'welcomed';
@@ -84,6 +90,9 @@ class Notepad extends ChangeNotifier {
   final List<Note> _notes;
   final _detector = ModeDetector();
   final _unsaved = <Note>{};
+  final _unsavedSettings = <String, String>{};
+  final _deleted = <String>{};
+  SqliteException? _saveError;
   Timer? _saveTimer;
   String? _selectedId;
 
@@ -115,6 +124,10 @@ class Notepad extends ChangeNotifier {
     }
     return open.isEmpty ? null : open.first;
   }
+
+  /// Why the latest changes couldn't be saved, or null if everything is
+  /// saved or waiting a moment to be.
+  String? get saveProblem => _saveError?.message;
 
   /// When [note] will be deleted for good, if it is in the trash.
   DateTime? deletesOn(Note note) => note.trashedAt?.add(trashKeptFor);
@@ -270,18 +283,42 @@ class Notepad extends ChangeNotifier {
   /// Deletes every note in the trash for good.
   void emptyTrash() => _remove(trashedNotes);
 
-  /// Saves any typing that is still waiting for [saveDelay].
-  void flush() {
+  /// Saves any changes that are still waiting, like typing within the last
+  /// [saveDelay]. Returns false if that failed: the changes are kept, and
+  /// saved by a later [flush] or the retry after [retryDelay].
+  bool flush() {
     _saveTimer?.cancel();
     _saveTimer = null;
-    if (_unsaved.isEmpty) return;
-    _store.saveNotes(_unsaved);
-    _unsaved.clear();
+    if (_unsaved.isNotEmpty ||
+        _unsavedSettings.isNotEmpty ||
+        _deleted.isNotEmpty) {
+      try {
+        _store.save(
+          notes: _unsaved,
+          settings: _unsavedSettings,
+          deletedNoteIds: _deleted,
+        );
+      } on SqliteException catch (error) {
+        _saveError = error;
+        _saveTimer = Timer(retryDelay, flush);
+        notifyListeners();
+        return false;
+      }
+      _unsaved.clear();
+      _unsavedSettings.clear();
+      _deleted.clear();
+    }
+    if (_saveError != null) {
+      _saveError = null;
+      notifyListeners();
+    }
+    return true;
   }
 
   @override
   void dispose() {
     flush();
+    _saveTimer?.cancel();
     appearance
       ..removeListener(_saveAppearance)
       ..dispose();
@@ -300,8 +337,9 @@ class Notepad extends ChangeNotifier {
   void _remove(List<Note> notes) {
     if (notes.isEmpty) return;
     _unsaved.removeAll(notes);
+    _deleted.addAll(notes.map((n) => n.id));
     _notes.removeWhere(notes.contains);
-    _store.deleteNotes(notes.map((n) => n.id));
+    flush();
     notifyListeners();
   }
 
@@ -318,23 +356,30 @@ class Notepad extends ChangeNotifier {
   void _select(Note? note) {
     if (note?.id == _selectedId) return;
     _selectedId = note?.id;
-    _store.setSetting(_selectedKey, note?.id ?? '');
+    // Not worth a disk write of its own; it goes with the next save.
+    _unsavedSettings[_selectedKey] = note?.id ?? '';
+    _scheduleSave();
+  }
+
+  void _saveSoon(Note note) {
+    _unsaved.add(note);
+    _scheduleSave();
   }
 
   // Saves soon, but at most saveDelay after the first unsaved change, so
-  // steady typing is still saved every few hundred milliseconds.
-  void _saveSoon(Note note) {
-    _unsaved.add(note);
-    _saveTimer ??= Timer(saveDelay, flush);
-  }
+  // steady typing is still saved every few hundred milliseconds. While saves
+  // are failing, this waits for the next retry instead.
+  void _scheduleSave() => _saveTimer ??= Timer(saveDelay, flush);
 
   void _saveNow(Note note) {
     _unsaved.add(note);
     flush();
   }
 
-  void _saveAppearance() =>
-      _store.setSetting(_appearanceKey, jsonEncode(appearance.value.toJson()));
+  void _saveAppearance() {
+    _unsavedSettings[_appearanceKey] = jsonEncode(appearance.value.toJson());
+    flush();
+  }
 
   String? _codeLanguageOrNull(String text) {
     final guess = _detector.detect(text);

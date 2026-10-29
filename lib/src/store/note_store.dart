@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../notes/note.dart';
@@ -35,7 +36,10 @@ class NoteStore {
       // until the database is closed.
       db.execute('PRAGMA locking_mode = EXCLUSIVE');
       db.execute('PRAGMA journal_mode = WAL');
-      db.execute('PRAGMA synchronous = NORMAL');
+      // FULL syncs the log to disk on every commit, so a save that has
+      // finished survives a power cut. NORMAL would be faster but could
+      // lose saves made since the last checkpoint.
+      db.execute('PRAGMA synchronous = FULL');
       db.execute('BEGIN EXCLUSIVE; COMMIT;');
     } on SqliteException catch (e) {
       db.close();
@@ -57,6 +61,10 @@ class NoteStore {
 
   final Database _db;
   late final PreparedStatement _saveNote;
+
+  /// The connection, for tests that check its settings or make it fail.
+  @visibleForTesting
+  Database get database => _db;
 
   static const schemaVersion = 1;
 
@@ -156,6 +164,19 @@ class NoteStore {
 
   void saveNote(Note note) => saveNotes([note]);
 
+  /// Saves [notes] and [settings] and deletes the notes in [deletedNoteIds],
+  /// in one transaction: either all of it is saved or, if this throws, none
+  /// of it.
+  void save({
+    Iterable<Note> notes = const [],
+    Map<String, String> settings = const {},
+    Iterable<String> deletedNoteIds = const [],
+  }) => _transaction(() {
+    saveNotes(notes);
+    settings.forEach(setSetting);
+    deleteNotes(deletedNoteIds);
+  });
+
   void deleteNotes(Iterable<String> ids) => _transaction(() {
     for (final id in ids) {
       _db.execute('DELETE FROM notes WHERE id = ?', [id]);
@@ -179,12 +200,15 @@ class NoteStore {
   }
 
   void _transaction(void Function() body) {
+    // Inside another transaction, which commits or rolls back for both.
+    if (!_db.autocommit) return body();
     _db.execute('BEGIN');
     try {
       body();
       _db.execute('COMMIT');
     } catch (_) {
-      _db.execute('ROLLBACK');
+      // SQLite rolls back by itself after some errors, like a full disk.
+      if (!_db.autocommit) _db.execute('ROLLBACK');
       rethrow;
     }
   }

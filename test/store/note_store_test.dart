@@ -69,6 +69,35 @@ void main() {
     store.close();
   });
 
+  test('save writes notes, settings and deletions together or not at all', () {
+    final store = NoteStore.inMemory();
+    store.saveNotes([_note(id: 'a'), _note(id: 'b')]);
+
+    final db = store.database;
+    final pages = db.select('PRAGMA page_count').single.values.single;
+    db.execute('PRAGMA max_page_count = $pages');
+    expect(
+      () => store.save(
+        notes: [_note(id: 'a', text: 'x' * 100000)],
+        settings: {'theme': 'slate'},
+        deletedNoteIds: ['b'],
+      ),
+      throwsA(isA<SqliteException>()),
+    );
+    expect(store.loadNotes().map((n) => n.text), ['SELECT 1;', 'SELECT 1;']);
+    expect(store.setting('theme'), isNull);
+
+    db.execute('PRAGMA max_page_count = 1000000');
+    store.save(
+      notes: [_note(id: 'a', text: 'x' * 100000)],
+      settings: {'theme': 'slate'},
+      deletedNoteIds: ['b'],
+    );
+    expect(store.loadNotes().single.text, hasLength(100000));
+    expect(store.setting('theme'), 'slate');
+    store.close();
+  });
+
   test('settings are stored and overwritten', () {
     final store = NoteStore.inMemory();
     expect(store.setting('theme'), isNull);
@@ -87,6 +116,15 @@ void main() {
     final second = NoteStore.open(path);
     expect(second.loadNotes().single.text, 'SELECT 1;');
     second.close();
+  });
+
+  test('a finished save is synced to disk, so it survives a power cut', () {
+    final store = NoteStore.open('${temp.path}/notes.db');
+    final db = store.database;
+    expect(db.select('PRAGMA journal_mode').single.values.single, 'wal');
+    // 2 is FULL: the log is synced on every commit.
+    expect(db.select('PRAGMA synchronous').single.values.single, 2);
+    store.close();
   });
 
   test('a second GPad on the same notes is turned away until the first '

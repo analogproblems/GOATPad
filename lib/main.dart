@@ -7,9 +7,10 @@ import 'src/store/note_store.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final path = await notesDatabasePath();
+  String? path;
   final Notepad notepad;
   try {
+    path = await notesDatabasePath();
     notepad = Notepad.load(NoteStore.open(path));
   } on StoreLockedException {
     runApp(
@@ -25,7 +26,7 @@ Future<void> main() async {
     runApp(
       StartupProblemApp(
         title: 'GPad couldn\'t open your notes',
-        message: '$error\n\nYour notes are in $path.',
+        message: path == null ? '$error' : '$error\n\nYour notes are in $path.',
       ),
     );
     return;
