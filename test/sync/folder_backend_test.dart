@@ -28,12 +28,37 @@ void main() {
         await FolderBackend(folder).readVault(),
         made.first ? first : second,
       );
-      // Nothing left over from the one that lost.
+      // Nothing left over from the one that lost, or the setup lock.
       expect(Directory(folder).listSync().map((e) => p.basename(e.path)), {
         'gpad-vault.json',
         'records',
       });
     }
+  });
+
+  test('a setup stopped halfway doesn\'t block the folder for good', () async {
+    final folder = p.join(dir.path, 'GPad');
+    await Directory(folder).create();
+    final lock = File(p.join(folder, '.gpad-setup.lock'))..createSync();
+    final vault = Uint8List.fromList('{"vault": 1}'.codeUnits);
+
+    // Another computer is setting up right now.
+    expect(await FolderBackend(folder).createVault(vault), isFalse);
+    expect(await FolderBackend(folder).readVault(), isNull);
+
+    // Or it stopped, long enough ago.
+    lock.setLastModifiedSync(DateTime.now().subtract(const Duration(hours: 1)));
+    expect(await FolderBackend(folder).createVault(vault), isTrue);
+    expect(await FolderBackend(folder).readVault(), vault);
+    expect(lock.existsSync(), isFalse);
+
+    // Stopped after its vault was in place: that vault stays.
+    lock
+      ..createSync()
+      ..setLastModifiedSync(DateTime.now().subtract(const Duration(hours: 1)));
+    final other = Uint8List.fromList('{"vault": 2}'.codeUnits);
+    expect(await FolderBackend(folder).createVault(other), isFalse);
+    expect(await FolderBackend(folder).readVault(), vault);
   });
 
   test('a write\'s tag is for the bytes it wrote', () async {

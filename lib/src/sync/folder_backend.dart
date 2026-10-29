@@ -37,6 +37,11 @@ class FolderBackend implements SyncBackend {
   @visibleForTesting
   Future<void> Function()? afterRename;
 
+  /// Runs after a copy is claimed for deleting, for tests that stop GPad
+  /// at that moment.
+  @visibleForTesting
+  Future<void> Function()? afterClaim;
+
   Directory get _records => Directory(p.join(path, 'records'));
   File get _vault => File(p.join(path, vaultFileName));
 
@@ -57,27 +62,22 @@ class FolderBackend implements SyncBackend {
   @override
   Future<bool> createVault(Uint8List bytes) => _guard(() async {
     await _records.create(recursive: true);
+    if (await _vault.exists()) return false;
     final temp = _tempFor(_vault);
     try {
       await temp.writeAsBytes(bytes, flush: true);
-      // Claimed by an exclusive create, which only one of two computers
-      // can win, even on a shared or network drive. Then filled in by a
-      // rename, so nobody reads half a header.
+      // Only the computer holding the setup lock publishes, so two setting
+      // up one folder at once can't both win. The header goes in whole, by
+      // a rename onto a name nothing is at, so it is never seen half
+      // written and never replaces another.
+      if (!await _lockSetup()) return false;
       try {
-        await _vault.create(exclusive: true);
-      } on FileSystemException {
         if (await _vault.exists()) return false;
-        rethrow;
-      }
-      try {
         await temp.rename(_vault.path);
-      } catch (_) {
-        // Give the claim up, rather than leave an empty vault file that
-        // nobody can join or replace.
-        await _vault.delete();
-        rethrow;
+        return true;
+      } finally {
+        await _unlockSetup();
       }
-      return true;
     } finally {
       try {
         await temp.delete();
@@ -86,6 +86,73 @@ class FolderBackend implements SyncBackend {
       }
     }
   });
+
+  /// Held while a computer sets this folder up. Left behind if GPad
+  /// stopped mid-setup, which is why an old one can be taken over.
+  File get _setupLock => File(p.join(path, '.gpad-setup.lock'));
+
+  /// How old a setup lock must be before it counts as left behind. Setting
+  /// up holds it for moments; the margin is for clocks that disagree
+  /// between computers and a file server.
+  static const staleLock = Duration(minutes: 10);
+
+  Future<bool> _lockSetup() async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await _setupLock.create(exclusive: true);
+        return true;
+      } on FileSystemException {
+        // Someone holds it, or held it and stopped.
+      }
+      final FileStat lock;
+      try {
+        lock = await _setupLock.stat();
+      } on FileSystemException {
+        continue;
+      }
+      if (lock.type == FileSystemEntityType.notFound) continue; // Let go of.
+      if (DateTime.now().difference(lock.modified) < staleLock) return false;
+      // Left behind. Renaming it away is something only one computer can
+      // do; whoever does tries for the lock again.
+      final taken = _tempFor(_setupLock);
+      try {
+        await _setupLock.rename(taken.path);
+      } on FileSystemException {
+        continue;
+      }
+      if (DateTime.now().difference((await taken.stat()).modified) <
+          staleLock) {
+        // A new lock took the old one's place just now; give it back.
+        try {
+          await taken.rename(_setupLock.path);
+        } on FileSystemException {
+          // Its owner finishes all the same.
+        }
+        return false;
+      }
+      try {
+        await taken.delete();
+      } on FileSystemException {
+        // A stray hidden file at worst.
+      }
+    }
+    return false;
+  }
+
+  Future<void> _unlockSetup() async {
+    // Windows can refuse while another computer looks at the lock, so try
+    // a few times; one left behind goes stale.
+    for (var attempt = 0; attempt < 5; attempt++) {
+      try {
+        await _setupLock.delete();
+        return;
+      } on PathNotFoundException {
+        return;
+      } on FileSystemException {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
+  }
 
   @override
   Future<List<RemoteFile>> list() => _guard(() async {
@@ -128,8 +195,12 @@ class FolderBackend implements SyncBackend {
   Future<bool> deleteIfUnchanged(RemoteFile file) => _guard(() async {
     final listed = _fileFor(file.name);
     // Renamed out of the way first, so a sync tool putting a new version
-    // there now makes a new file rather than one that gets deleted.
-    final claimed = _tempFor(listed);
+    // there now makes a new file rather than one that gets deleted. The
+    // new name is still a copy's, so if GPad stops here, or the copy had
+    // changed since it was read, the next round reads it like any other.
+    final claimed = _fileFor(
+      '${file.recordId} (claimed by GPad ${_random.nextInt(1 << 32)}).gpad',
+    );
     try {
       await listed.rename(claimed.path);
     } on PathNotFoundException {
@@ -137,19 +208,12 @@ class FolderBackend implements SyncBackend {
     } on FileSystemException {
       return false; // Open in another program, say; next round, then.
     }
-    if (file.tag != null && _tag(await claimed.stat()) == file.tag) {
-      await claimed.delete();
-      return true;
+    await afterClaim?.call();
+    if (file.tag == null || _tag(await claimed.stat()) != file.tag) {
+      return false;
     }
-    // Changed since it was read. Kept under a name of its own, which no
-    // sync tool is writing to, for the next round to read.
-    await claimed.rename(
-      _fileFor(
-        '${file.recordId} (changed while syncing '
-        '${_random.nextInt(1 << 32)}).gpad',
-      ).path,
-    );
-    return false;
+    await claimed.delete();
+    return true;
   });
 
   @override

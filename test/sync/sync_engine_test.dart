@@ -214,6 +214,30 @@ void main() {
     home.notepad.store.close();
   });
 
+  test('a folder deletion that can\'t be saved is undone too', () async {
+    final recipes = work.notepad.createFolder(name: 'Recipes');
+    final soup = work.write('Soup', 'leeks');
+    work.notepad.moveNote(soup, recipes);
+    await work.sync();
+    await home.sync();
+    work.notepad.deleteFolder(recipes);
+    await work.sync();
+
+    home.notepad.store.database.execute('''
+      CREATE TEMP TRIGGER disk_full BEFORE UPDATE OF version ON sync_records
+      BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END
+    ''');
+    await expectLater(home.sync(), throwsA(isA<SyncException>()));
+    expect(home.notepad.folders.map((f) => f.name), ['Recipes']);
+    expect(home.notepad.folderOf(home.note('Soup'))?.name, 'Recipes');
+    expect(home.notepad.flush(), isTrue);
+
+    home.notepad.store.database.execute('DROP TRIGGER disk_full');
+    await home.sync();
+    expect(home.notepad.folders, isEmpty);
+    expect(home.notepad.folderOf(home.note('Soup')), isNull);
+  });
+
   test('different changes to one note merge without a copy', () async {
     work.write('Notes', 'start');
     await work.sync();
@@ -308,6 +332,53 @@ void main() {
     await work.sync();
     expect(work.notepad.keptNotes.map((n) => n.text), contains('home again'));
     // Merged in this time, and removed.
+    expect(recordFiles().where((f) => f.contains(' ')), isEmpty);
+  });
+
+  test('a copy claimed just before GPad stopped is merged next time', () async {
+    work.write('Doc', 'base');
+    await work.sync();
+    await home.sync();
+    final id = work.note('Doc').id;
+    final own = File(p.join(folder, 'records', '$id.gpad'));
+    final before = own.readAsBytesSync();
+    home.notepad.editText(home.note('Doc'), 'home');
+    await home.sync();
+    final homeFile = own.readAsBytesSync();
+    home.notepad.editText(home.note('Doc'), 'home again');
+    await home.sync();
+    final homeLater = own.readAsBytesSync();
+
+    own.writeAsBytesSync(before);
+    work.notepad.editText(work.note('Doc'), 'work');
+    await work.sync();
+    final copy = File(
+      p.join(folder, 'records', "$id (Home laptop's conflicted copy).gpad"),
+    )..writeAsBytesSync(homeFile);
+    // The copy changes after work reads it, and GPad stops as soon as it
+    // has claimed the copy for deleting.
+    work.backend.afterClaim = () => throw StateError('stopped');
+    final engine = SyncEngine(
+      backend: _SlowBackend(
+        work.backend,
+        null,
+        afterRead: (file) async {
+          if (file.isCanonical) return;
+          await copy.writeAsBytes(homeLater);
+          await copy.setLastModified(DateTime(2020));
+        },
+      ),
+      vault: made.vault,
+      notepad: work.notepad,
+      deviceId: 'Work PC-id',
+      deviceName: 'Work PC',
+    );
+    await expectLater(engine.sync(), throwsStateError);
+
+    // Started again.
+    work.backend.afterClaim = null;
+    await work.sync();
+    expect(work.notepad.keptNotes.map((n) => n.text), contains('home again'));
     expect(recordFiles().where((f) => f.contains(' ')), isEmpty);
   });
 

@@ -338,9 +338,10 @@ GPad/
 - **One file per note or folder,** named by its random id, so titles never
   leak through file names and two machines editing different notes never
   touch the same file. Writes go to a temporary file that is then renamed,
-  so a sync tool never uploads half a file. The vault file is first
-  claimed with an exclusive create, so of two computers setting up one
-  shared folder at once, only one can win.
+  so a sync tool never uploads half a file. Setting a folder up takes a
+  lock file first (an exclusive create), so of two computers setting up
+  one shared folder at once, only one can win; a lock left behind by a
+  GPad that stopped mid-setup can be taken over after 10 minutes.
 - **A record** is JSON inside the encryption: kind, id, a version vector,
   the device that saved it and its name, when, and the data (or nothing,
   for a delete, which is kept so other machines learn about it).
@@ -365,9 +366,10 @@ are unchanged since last time, and opens the rest:
 - **Older than what this machine has, or missing:** uploaded again, so a
   rolled-back or deleted file is put right by any machine that knows better.
 - **Copies made by the sync tool** (Dropbox's "conflicted copy", Syncthing's
-  `.sync-conflict-`) are merged in like any other version, then deleted,
-  unless the copy changed after it was read: then it stays for the next
-  round.
+  `.sync-conflict-`) are merged in like any other version, then deleted:
+  first renamed to a copy name of GPad's own, then deleted only if it is
+  still the version that was read. A copy that changed, or one GPad
+  stopped before deleting, is read again next round.
 - **A file that can't be opened** (damaged, changed by something else, or
   saved by a newer GPad) is left alone and reported in the sync dialog. It
   is tried again only once it changes. Changes here to that note wait
