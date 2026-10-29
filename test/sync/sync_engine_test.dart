@@ -638,6 +638,45 @@ void main() {
     expect(home.note('Big').text, 'x' * 3000);
   });
 
+  test('a copy merged into a note too large to upload stays', () async {
+    work.write('Doc', 'small');
+    await work.sync();
+    await home.sync();
+    final id = work.note('Doc').id;
+    final own = File(p.join(folder, 'records', '$id.gpad'));
+    final before = own.readAsBytesSync();
+
+    // Home renames it, and the sync tool keeps the old file and makes a
+    // copy of home's.
+    home.notepad.rename(home.note('Doc'), 'Renamed at home');
+    await home.sync();
+    final homeFile = own.readAsBytesSync();
+    own.writeAsBytesSync(before);
+    final copy = File(
+      p.join(folder, 'records', "$id (Home laptop's conflicted copy).gpad"),
+    )..writeAsBytesSync(homeFile);
+
+    // Meanwhile the note grew too large here.
+    work.backend.recordLimit = 4096;
+    work.notepad.editText(work.note('Doc'), 'x' * 3900);
+    for (var round = 0; round < 2; round++) {
+      final report = await work.sync();
+      expect(report.tooLarge, [id], reason: 'round $round');
+      // The rename is merged here, but only the copy carries it out there.
+      expect(work.note('Renamed at home').text, 'x' * 3900);
+      expect(copy.readAsBytesSync(), homeFile, reason: 'round $round');
+      expect(own.readAsBytesSync(), before, reason: 'round $round');
+    }
+
+    // Small again: the merged note goes up, and the copy can go.
+    work.notepad.editText(work.note('Renamed at home'), 'small again');
+    final report = await work.sync();
+    expect(report.tooLarge, isEmpty);
+    expect(copy.existsSync(), isFalse);
+    await home.sync();
+    expect(home.note('Renamed at home').text, 'small again');
+  });
+
   test('an old version put back is replaced by the latest', () async {
     work.write('Draft', 'one');
     await work.sync();

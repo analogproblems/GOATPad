@@ -389,6 +389,8 @@ class SyncEngine {
     if (copy != null) report?.conflicts++;
   }
 
+  /// Uploads what changed here, except records in [blocked], and adds to
+  /// it records that can't go up, so their copies stay.
   Future<void> _upload(SyncReport report, Set<String> blocked) async {
     _flush();
     for (final state in _store.pendingSync()) {
@@ -419,14 +421,17 @@ class SyncEngine {
       final seen = (seq, state.version);
       if (_tooLarge[state.id] == seen) {
         report.tooLarge.add(state.id);
+        blocked.add(state.id);
         continue;
       }
       final sealed = vault.seal(state.id, record.encode());
-      // Other computers would refuse it, so it doesn't go up, and the copy
-      // already there stays as it is.
+      // Other computers would refuse it, so it doesn't go up. The file
+      // already there stays as it is, and so do copies other tools made of
+      // it, which may hold changes merged here that only they carry.
       if (sealed.length > backend.recordLimit) {
         _tooLarge[state.id] = seen;
         report.tooLarge.add(state.id);
+        blocked.add(state.id);
         continue;
       }
       _tooLarge.remove(state.id);
