@@ -1,4 +1,3 @@
-import 'package:fleather/fleather.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -37,7 +36,6 @@ class _GoatPadAppState extends State<GoatPadApp> {
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
-        FleatherLocalizations.delegate,
         FlutterQuillLocalizations.delegate,
       ],
       supportedLocales: const [Locale('en')],

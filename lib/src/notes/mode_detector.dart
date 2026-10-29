@@ -49,6 +49,10 @@ class ModeDetector {
   /// Only this many characters are scanned, so huge pastes stay instant.
   static const sampleLength = 8000;
 
+  /// Exact JSON parsing reads the whole text, so above this length only the
+  /// opening of the text is checked.
+  static const maxExactParseLength = 1 << 20;
+
   /// Below this highlight.js relevance a code guess is treated as noise.
   /// Short snippets score low, so this stays small and [_readsLikeProse]
   /// does the work of keeping sentences out of Code mode.
@@ -63,12 +67,12 @@ class ModeDetector {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return const ModeGuess.plain();
 
-    if (_isJson(trimmed)) return const ModeGuess.code('json');
-    if (_isXml(trimmed)) return const ModeGuess.code('xml');
-
     final sample = trimmed.length > sampleLength
         ? trimmed.substring(0, sampleLength)
         : trimmed;
+
+    if (_isJson(trimmed)) return const ModeGuess.code('json');
+    if (_isXml(trimmed, sample)) return const ModeGuess.code('xml');
 
     final markdownSigns = _markdownSigns(sample);
     if (markdownSigns >= 2) return const ModeGuess.rich();
@@ -88,9 +92,17 @@ class ModeDetector {
     return const ModeGuess.plain();
   }
 
+  static final _jsonOpening = RegExp(
+    r'^[\[{]\s*("|[\[{\]}]|-?\d|true\b|false\b|null\b)',
+  );
+
   static bool _isJson(String text) {
     final first = text[0];
     if (first != '{' && first != '[') return false;
+    if (text.length > maxExactParseLength) {
+      return _jsonOpening.hasMatch(text.substring(0, 64)) &&
+          (text.endsWith('}') || text.endsWith(']'));
+    }
     try {
       jsonDecode(text);
       return true;
@@ -99,11 +111,15 @@ class ModeDetector {
     }
   }
 
-  static final _xmlPattern = RegExp(r'^<(\?xml|[A-Za-z!])[\s\S]*>$');
+  static final _xmlOpening = RegExp(r'^<[A-Za-z!]');
 
-  static bool _isXml(String text) =>
-      (_xmlPattern.hasMatch(text) && text.contains('</')) ||
-      text.startsWith('<?xml');
+  /// Only the opening, the last character and the [sample] are looked at, so
+  /// this stays cheap on huge pastes.
+  static bool _isXml(String text, String sample) =>
+      text.startsWith('<?xml') ||
+      (_xmlOpening.hasMatch(text) &&
+          text.endsWith('>') &&
+          sample.contains('</'));
 
   static final _markdownPatterns = [
     RegExp(r'^#{1,6} \S', multiLine: true), // heading

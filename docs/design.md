@@ -27,18 +27,30 @@ Flutter (Dart) for one codebase across desktop now and mobile later.
 | --- | --- | --- |
 | Code and Plain editing | [re_editor](https://pub.dev/packages/re_editor) | Draws its own text instead of using `TextField`, so large pastes stay fast. Search and replace, folding, line numbers. |
 | Syntax highlighting and language detection | [re_highlight](https://pub.dev/packages/re_highlight) | A Dart port of highlight.js: ~190 grammars and `highlightAuto`. |
-| Rich editing | [flutter_quill](https://pub.dev/packages/flutter_quill) or [fleather](https://pub.dev/packages/fleather) | Chosen by feel in the editor lab. See below. |
+| Rich editing | [flutter_quill](https://pub.dev/packages/flutter_quill) + [markdown_quill](https://pub.dev/packages/markdown_quill) | Picked by feel in the step 1 editor lab. See below. |
 
-### Rich editor candidates
+### Rich editor choice
 
-The step 1 editor lab shows the same note in both candidates, switchable from
-the status bar.
+**flutter_quill**, picked over fleather in the step 1 editor lab for its
+nicer UI. It is also the most used and most actively released. Quill stores
+its own Delta format, so Markdown goes through
+[markdown_quill](https://pub.dev/packages/markdown_quill) in both directions.
 
-- **flutter_quill**: the most used and most actively released. Stores Quill
-  Delta, so Markdown goes through the separate
-  [markdown_quill](https://pub.dev/packages/markdown_quill) converter.
-- **fleather**: also Delta-based, but its document model (parchment) ships
-  its own Markdown codec.
+Known gaps to handle in step 2:
+
+- Quill throws on any embed it has no builder for, and markdown_quill turns
+  `![alt](url)` and `---` into embeds. The lab shows rules as dividers and
+  images as their address. Remote images are not fetched, so pasting
+  Markdown never makes a network request on its own.
+- markdown_quill drops image alt text and escapes punctuation on the way
+  out (`Done.` becomes `Done\.`). The meaning survives, but the stored
+  Markdown gets noisier. Step 2 should either clean up its output or keep the
+  Delta next to the Markdown.
+
+Other candidates:
+
+- **fleather**: also Delta-based, with its own Markdown codec. Compared
+  side by side in the lab; Quill felt better.
 - **appflowy_editor** was the first pick on paper, because it reads and writes
   Markdown natively. Its latest release (6.2.0, December 2025) does not compile
   on Flutter 3.47.8: `DeltaTextInputService` is missing the new
@@ -76,7 +88,9 @@ paste into a new note:
    does not read as prose: Code in that language.
 5. Otherwise: Plain.
 
-Only the first 8,000 characters are scanned, so a huge paste stays instant.
+Language detection scans only the first 8,000 characters, and exact JSON
+parsing is skipped above 1 MB in favor of checking how the text opens and
+closes, so a huge paste stays instant.
 The mode shows in the status bar and one click changes it.
 
 `suggestName` (`lib/src/notes/name_suggester.dart`) fills an editable title

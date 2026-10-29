@@ -30,8 +30,8 @@ class LabNote {
   bool awaitingFirstPaste;
 }
 
-/// Step 1 prototype: tabs, smart modes and both rich editors, with nothing
-/// saved yet. Its job is to answer "which rich editor feels right?".
+/// Step 1 prototype: tabs, smart modes and inline naming, with nothing saved
+/// yet. It settled the rich editor: Quill.
 class EditorLab extends StatefulWidget {
   const EditorLab({super.key, required this.onToggleTheme});
 
@@ -46,7 +46,6 @@ class _EditorLabState extends State<EditorLab> {
   final List<LabNote> _notes = [];
   int _nextId = 0;
   int? _selectedId;
-  RichEngine _richEngine = RichEngine.quill;
 
   @override
   void initState() {
@@ -327,7 +326,7 @@ class _EditorLabState extends State<EditorLab> {
 
   Widget _editor(LabNote note) {
     final key = ValueKey(
-      '${note.id}-${note.guess.mode}-${note.guess.language}-$_richEngine',
+      '${note.id}-${note.guess.mode}-${note.guess.language}',
     );
     void onChanged(String text) => _onTextChanged(note, text);
 
@@ -339,18 +338,7 @@ class _EditorLabState extends State<EditorLab> {
         onChanged: onChanged,
       );
     }
-    return switch (_richEngine) {
-      RichEngine.fleather => FleatherNoteEditor(
-        key: key,
-        markdown: note.text,
-        onChanged: onChanged,
-      ),
-      RichEngine.quill => QuillNoteEditor(
-        key: key,
-        markdown: note.text,
-        onChanged: onChanged,
-      ),
-    };
+    return QuillNoteEditor(key: key, markdown: note.text, onChanged: onChanged);
   }
 
   Widget _statusBar(BuildContext context, LabNote note) {
@@ -396,26 +384,6 @@ class _EditorLabState extends State<EditorLab> {
               ],
               onChanged: (language) =>
                   setState(() => note.guess = ModeGuess.code(language!)),
-            ),
-          ],
-          if (note.guess.mode == NoteMode.rich) ...[
-            const SizedBox(width: 16),
-            Text('Rich editor:', style: small),
-            const SizedBox(width: 8),
-            SegmentedButton<RichEngine>(
-              showSelectedIcon: false,
-              style: const ButtonStyle(
-                visualDensity: VisualDensity(horizontal: -4, vertical: -4),
-              ),
-              segments: [
-                for (final engine in RichEngine.values)
-                  ButtonSegment(
-                    value: engine,
-                    label: Text(engine.label, style: small),
-                  ),
-              ],
-              selected: {_richEngine},
-              onSelectionChanged: (s) => setState(() => _richEngine = s.first),
             ),
           ],
           const Spacer(),
@@ -512,11 +480,11 @@ class _Tab extends StatelessWidget {
 const _welcome = '''
 # Welcome to the editor lab
 
-This is the **step 1 prototype**. Nothing is saved yet. Its job is to help pick the rich-text editor.
+This is the **step 1 prototype**. Nothing is saved yet. Rich notes use the Quill editor, picked over Fleather here in the lab.
 
 ## Try this
 
-- Flip **Rich editor** in the status bar between Quill and Fleather, on this same note
+- Switch this note to **Code** in the status bar to see its Markdown, then back to **Rich**
 - Press Ctrl+N, then paste something: code, JSON, an email, or a Markdown list
 - Watch the mode and the suggested name change, then rename the tab inline
 - Close a tab with Ctrl+W, then reopen it from the sidebar

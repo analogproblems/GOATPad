@@ -11,8 +11,8 @@ waiting in a tab on your Linux machine at home.
 
 ## Status
 
-Early. This is the **step 1 editor lab**: tabs, smart note modes, inline
-naming, and two rich-text editors side by side so we can pick one by feel.
+Early. This is the **step 1 editor lab**: tabs, smart note modes and inline
+naming, with Quill as the rich-text editor (picked over Fleather in the lab).
 Nothing is saved yet.
 
 | Step | What it delivers | State |
@@ -36,7 +36,8 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
 
 ## Try the editor lab
 
-1. Flip **Rich editor** in the status bar between Quill and Fleather.
+1. Switch the welcome note to **Code** in the status bar to see its Markdown,
+   then back to **Rich**.
 2. Press Ctrl+N and paste code, JSON, an email or a Markdown list. Watch the
    mode and the suggested name change.
 3. Close a tab with Ctrl+W and reopen it from the sidebar.

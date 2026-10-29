@@ -194,6 +194,20 @@ Jason
     });
   });
 
+  test('huge JSON is recognized without parsing all of it', () {
+    final big =
+        '[${List.filled(200000, '{"id": 1, "title": "note"}').join(',')}]';
+    expect(big.length, greaterThan(ModeDetector.maxExactParseLength));
+    final watch = Stopwatch()..start();
+    expect(detector.detect(big), const ModeGuess.code('json'));
+    expect(watch.elapsed, lessThan(const Duration(seconds: 1)));
+  });
+
+  test('huge text that merely starts with a bracket is not JSON', () {
+    final big = '[draft] ${List.filled(200000, 'some words here').join(' ')}';
+    expect(detector.detect(big).language, isNot('json'));
+  });
+
   test('a huge paste is only sampled', () {
     final big = List.filled(
       20000,

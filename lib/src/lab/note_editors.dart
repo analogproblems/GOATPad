@@ -1,27 +1,14 @@
 import 'dart:async';
 
-import 'package:fleather/fleather.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:markdown/markdown.dart' as md;
 import 'package:markdown_quill/markdown_quill.dart';
 import 'package:re_editor/re_editor.dart';
-import 'package:parchment/codecs.dart';
 import 'package:re_highlight/languages/all.dart';
 
 import '../notes/note_mode.dart';
 import '../theme.dart';
-
-/// Which package draws Rich notes. The lab lets you flip between them on the
-/// same note to compare how they feel.
-enum RichEngine {
-  quill('Quill'),
-  fleather('Fleather');
-
-  const RichEngine(this.label);
-
-  final String label;
-}
 
 /// re_editor for Code and Plain notes.
 class CodeNoteEditor extends StatefulWidget {
@@ -106,75 +93,9 @@ class _CodeNoteEditorState extends State<CodeNoteEditor> {
   }
 }
 
-/// fleather for Rich notes. Its document model, parchment, ships a Markdown
-/// codec, so no add-on converter is needed.
-class FleatherNoteEditor extends StatefulWidget {
-  const FleatherNoteEditor({
-    super.key,
-    required this.markdown,
-    required this.onChanged,
-  });
-
-  final String markdown;
-  final ValueChanged<String> onChanged;
-
-  @override
-  State<FleatherNoteEditor> createState() => _FleatherNoteEditorState();
-}
-
-class _FleatherNoteEditorState extends State<FleatherNoteEditor> {
-  late final FleatherController _controller = FleatherController(
-    document: widget.markdown.trim().isEmpty
-        ? ParchmentDocument()
-        : parchmentMarkdown.decode(widget.markdown),
-  );
-  StreamSubscription<ParchmentChange>? _changes;
-
-  @override
-  void initState() {
-    super.initState();
-    _changes = _controller.document.changes.listen(
-      (_) => widget.onChanged(parchmentMarkdown.encode(_controller.document)),
-    );
-  }
-
-  @override
-  void dispose() {
-    _changes?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return ColoredBox(
-      color: scheme.surfaceContainerLowest,
-      child: Column(
-        children: [
-          FleatherToolbar.basic(
-            controller: _controller,
-            hideBackgroundColor: true,
-            hideForegroundColor: true,
-            hideAlignment: true,
-            hideDirection: true,
-          ),
-          const Divider(),
-          Expanded(
-            child: FleatherEditor(
-              controller: _controller,
-              autofocus: true,
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// flutter_quill for Rich notes. Quill keeps its own Delta format, so this
-/// converts to and from Markdown with markdown_quill.
+/// converts to and from Markdown with markdown_quill. Picked over Fleather in
+/// the step 1 editor lab.
 class QuillNoteEditor extends StatefulWidget {
   const QuillNoteEditor({
     super.key,
@@ -254,7 +175,61 @@ class _QuillNoteEditorState extends State<QuillNoteEditor> {
               // Quill throws if it takes focus before its first layout.
               config: const quill.QuillEditorConfig(
                 padding: EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                unknownEmbedBuilder: _EmbedPlaceholderBuilder(),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shows embeds from Markdown (images, rules) without loading anything.
+///
+/// Quill throws for any embed type it has no builder for, and markdown_quill
+/// turns `![alt](url)` and `---` into embeds. Remote images are shown as
+/// their address instead of being fetched, so pasting Markdown never makes a
+/// network request on its own. The embed itself stays in the document, so it
+/// round-trips back to Markdown unchanged.
+class _EmbedPlaceholderBuilder extends quill.EmbedBuilder {
+  const _EmbedPlaceholderBuilder();
+
+  /// markdown_quill's embed type for `---`; the package doesn't export it.
+  static const _markdownQuillRuleType = 'divider';
+
+  @override
+  String get key => 'goatpad-placeholder';
+
+  @override
+  Widget build(BuildContext context, quill.EmbedContext embedContext) {
+    final embed = embedContext.node.value;
+    if (embed.type == _markdownQuillRuleType) {
+      return const Divider(height: 24);
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+    final isImage = embed.type == quill.BlockEmbed.imageType;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isImage ? Icons.image_outlined : Icons.extension_outlined,
+            size: 16,
+            color: scheme.outline,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              isImage ? '${embed.data}' : '${embed.type}: ${embed.data}',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.outline),
             ),
           ),
         ],

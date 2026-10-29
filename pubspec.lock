@@ -81,14 +81,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.9"
-  cupertino_ui:
-    dependency: transitive
-    description:
-      name: cupertino_ui
-      sha256: a47c4e7c66fd7444a063a602597fceb238f705c3f6b1322bc0053d0a2638ee6e
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.1.4"
   dart_quill_delta:
     dependency: transitive
     description:
@@ -137,14 +129,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.9.3+6"
-  fleather:
-    dependency: "direct main"
-    description:
-      name: fleather
-      sha256: "0226c9d4bc0d57a0abc60a7b6a2ab007efed6f5d4b19d8735c44d2d53b031cff"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.28.0"
   flutter:
     dependency: "direct main"
     description: flutter
@@ -357,14 +341,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.13.0"
-  material_ui:
-    dependency: transitive
-    description:
-      name: material_ui
-      sha256: e4031746f96c8316864d9b92bce375f1320a36ed56e166307e1e1bda9d90b4ab
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.8.0"
   meta:
     dependency: transitive
     description:
@@ -373,22 +349,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.18.3"
-  parchment:
-    dependency: "direct main"
-    description:
-      name: parchment
-      sha256: "1af4dd4a39034452aecabac2baf4cb2a5248fc4467b6ba48cd5e11e533e00875"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.27.0"
-  parchment_delta:
-    dependency: transitive
-    description:
-      name: parchment_delta
-      sha256: "8b360d0138eb591c7fe193670e2d05466e482792af9c5b4d3f568c5c61530f08"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
   path:
     dependency: transitive
     description:
@@ -644,4 +604,4 @@ packages:
     version: "5.15.0"
 sdks:
   dart: ">=3.13.7 <4.0.0"
-  flutter: ">=3.47.0"
+  flutter: ">=3.44.0"
