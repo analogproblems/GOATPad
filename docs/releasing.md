@@ -20,6 +20,9 @@ replace a key that is already there. Then:
 1. Add the private key as the repository secret `GPAD_UPDATE_SIGNING_KEY`
    (**Settings → Secrets and variables → Actions → New repository
    secret**), pasting the whole file, `BEGIN` and `END` lines included.
+   If you have more than one key file, the right one is the file for which
+   `openssl pkey -in <file> -pubout` prints `tool/update_public_key.pem`.
+   A [dry run](#a-dry-run) checks the secret and says what's wrong with it.
 2. Keep the file somewhere safe and private, like a password manager, and
    delete it from where you made it. Anyone with it, and the means to
    publish a release here, can sign updates GPad installs. Without it,
