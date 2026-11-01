@@ -133,6 +133,9 @@ refuses v1.2.3 'no tool/update_public_key.pem' \
 setup 1.2.3
 signing=$(cat "$work/other.pem")
 refuses v1.2.3 "doesn't match tool/update_public_key.pem" "another key"
+setup 1.2.3
+signing=$(cat "$work/public.pem")
+refuses v1.2.3 "isn't a private key" "the public key as the secret"
 
 # A dry run before the key is made goes on, unsigned; with the wrong key,
 # it stops as a release would.

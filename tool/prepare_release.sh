@@ -86,6 +86,9 @@ else
   [ -n "${GPAD_UPDATE_SIGNING_KEY:-}" ] ||
     fail "GPAD_UPDATE_SIGNING_KEY isn't set; see docs/releasing.md"
   printf '%s\n' "$GPAD_UPDATE_SIGNING_KEY" >"$staging/key.pem"
+  openssl pkey -in "$staging/key.pem" -noout 2>/dev/null ||
+    fail "GPAD_UPDATE_SIGNING_KEY isn't a private key; set it to all of" \
+      "gpad-update-signing-key.pem, from its BEGIN PRIVATE KEY line to END"
   openssl pkeyutl -sign -inkey "$staging/key.pem" -rawin -in "$manifest" \
     -out "$staging/signature"
   openssl pkeyutl -verify -pubin -inkey "$public" -rawin -in "$manifest" \
