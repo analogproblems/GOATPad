@@ -97,17 +97,30 @@ signing_key() {
   printf '%s\n' '-----BEGIN PRIVATE KEY-----' "$body" \
     '-----END PRIVATE KEY-----' >"$2"
   openssl pkey -in "$2" -noout 2>/dev/null && return
+  copy="copying the file straight to the clipboard, as docs/releasing.md says"
+  if printf '%s' "$1" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+    fail "GPAD_UPDATE_SIGNING_KEY has characters a key file never has, like" \
+      "the curly dashes or odd spaces a word processor or chat app puts" \
+      "in; set it again, $copy"
+  fi
+  public_body=$(grep -v -e ----- "$public" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$public_body" ] || [ "$body" != "$public_body" ] ||
+    fail "GPAD_UPDATE_SIGNING_KEY holds the public key's middle line, not" \
+      "the private key; $wanted"
   case $1 in
   *.pem*)
     fail "GPAD_UPDATE_SIGNING_KEY looks like a file name; paste what's in" \
       "the file instead: $wanted" ;;
   *"BEGIN PRIVATE KEY"*)
     fail "GPAD_UPDATE_SIGNING_KEY has the BEGIN line, but the key after it" \
-      "is cut short or changed; $wanted" ;;
+      "is cut short or changed; set it again, $copy" ;;
   *-----BEGIN*)
     fail "GPAD_UPDATE_SIGNING_KEY holds some other kind of key; $wanted" ;;
   esac
-  fail "GPAD_UPDATE_SIGNING_KEY isn't a private key; $wanted"
+  lines=$(printf '%s\n' "$1" | wc -l | tr -d ' ')
+  fail "GPAD_UPDATE_SIGNING_KEY isn't a private key: it's ${#1} characters" \
+    "on $lines line(s), with no -----BEGIN line, where the key file is about" \
+    "120 on 3; $wanted"
 }
 
 # Signed, or GPad won't install it. Checked against the public key builds

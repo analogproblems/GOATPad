@@ -20,6 +20,13 @@ replace a key that is already there. Then:
 1. Add the private key as the repository secret `GPAD_UPDATE_SIGNING_KEY`
    (**Settings → Secrets and variables → Actions → New repository
    secret**), pasting the whole file, `BEGIN` and `END` lines included.
+   Copying it straight to the clipboard is safest, since a selection can
+   miss a line and a word processor or chat app can change dashes and
+   spaces: `clip < gpad-update-signing-key.pem` on Windows (in Git Bash),
+   `xclip -selection clipboard < gpad-update-signing-key.pem` or
+   `wl-copy < gpad-update-signing-key.pem` on Linux. With the GitHub CLI,
+   `gh secret set GPAD_UPDATE_SIGNING_KEY < gpad-update-signing-key.pem`
+   sets it with no copying at all.
    If you have more than one key file, the right one is the file for which
    `openssl pkey -in <file> -pubout` prints `tool/update_public_key.pem`.
    A [dry run](#a-dry-run) checks the secret and says what's wrong with it.

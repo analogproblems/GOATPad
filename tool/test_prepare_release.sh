@@ -149,8 +149,16 @@ setup 1.2.3
 signing=$(openssl req -x509 -key "$work/private.pem" -subj /CN=x 2>/dev/null)
 refuses v1.2.3 "some other kind of key" "a certificate"
 setup 1.2.3
+signing=$(sed -n 2p "$work/public.pem")
+refuses v1.2.3 "the public key's middle line" "the public key's middle line"
+setup 1.2.3
+dash=$(printf '\342\200\224') # an em dash, as a word processor makes one
+signing=$(sed "s/-----/$dash/g" "$work/private.pem")
+refuses v1.2.3 "characters a key file never has" "curly dashes"
+setup 1.2.3
 signing="not a key"
-refuses v1.2.3 "isn't a private key" "not a key"
+refuses v1.2.3 "it's 9 characters on 1 line(s), with no -----BEGIN line" \
+  "not a key"
 
 # The key goes in however it was pasted.
 for paste in "one line:$(tr '\n' ' ' <"$work/private.pem")" \
