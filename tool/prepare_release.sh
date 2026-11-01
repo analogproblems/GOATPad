@@ -74,10 +74,60 @@ manifest="$out/gpad-update.json"
   printf '}}'
 } >"$manifest"
 
+# Writes the private key in $1 to the file $2 as PEM, however it was pasted:
+# the whole file, all on one line, with Windows line ends, or only the
+# middle line. Anything else stops the release, saying what it looks like
+# without showing any of it.
+signing_key() {
+  wanted="set it to all of gpad-update-signing-key.pem, from its"
+  wanted="$wanted -----BEGIN PRIVATE KEY----- line to -----END PRIVATE KEY-----"
+  case $1 in
+  *"BEGIN PUBLIC KEY"*)
+    fail "GPAD_UPDATE_SIGNING_KEY holds the public key, not the private" \
+      "one; $wanted" ;;
+  *"BEGIN ENCRYPTED PRIVATE KEY"*)
+    fail "GPAD_UPDATE_SIGNING_KEY is locked with a passphrase, which CI" \
+      "can't type; make the key again with tool/make_update_key.sh" ;;
+  *OPENSSH* | ssh-*)
+    fail "GPAD_UPDATE_SIGNING_KEY holds an SSH key; $wanted" ;;
+  esac
+  body=$(printf '%s\n' "$1" |
+    sed 's/-----BEGIN PRIVATE KEY-----//; s/-----END PRIVATE KEY-----//' |
+    tr -d '[:space:]')
+  printf '%s\n' '-----BEGIN PRIVATE KEY-----' "$body" \
+    '-----END PRIVATE KEY-----' >"$2"
+  openssl pkey -in "$2" -noout 2>/dev/null && return
+  copy="copying the file straight to the clipboard, as docs/releasing.md says"
+  if printf '%s' "$1" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then
+    fail "GPAD_UPDATE_SIGNING_KEY has characters a key file never has, like" \
+      "the curly dashes or odd spaces a word processor or chat app puts" \
+      "in; set it again, $copy"
+  fi
+  public_body=$(grep -v -e ----- "$public" 2>/dev/null | tr -d '[:space:]')
+  [ -z "$public_body" ] || [ "$body" != "$public_body" ] ||
+    fail "GPAD_UPDATE_SIGNING_KEY holds the public key's middle line, not" \
+      "the private key; $wanted"
+  case $1 in
+  *.pem*)
+    fail "GPAD_UPDATE_SIGNING_KEY looks like a file name; paste what's in" \
+      "the file instead: $wanted" ;;
+  *"BEGIN PRIVATE KEY"*)
+    fail "GPAD_UPDATE_SIGNING_KEY has the BEGIN line, but the key after it" \
+      "is cut short or changed; set it again, $copy" ;;
+  *-----BEGIN*)
+    fail "GPAD_UPDATE_SIGNING_KEY holds some other kind of key; $wanted" ;;
+  esac
+  lines=$(printf '%s\n' "$1" | wc -l | tr -d ' ')
+  fail "GPAD_UPDATE_SIGNING_KEY isn't a private key: it's ${#1} characters" \
+    "on $lines line(s), with no -----BEGIN line, where the key file is about" \
+    "120 on 3; $wanted"
+}
+
 # Signed, or GPad won't install it. Checked against the public key builds
 # carry, so a release never goes out that they would refuse. A dry run
 # (DRY_RUN=true) before the key is made goes on unsigned.
 public="$root/tool/update_public_key.pem"
+
 if [ "${DRY_RUN:-false}" = true ] &&
   { [ ! -f "$public" ] || [ -z "${GPAD_UPDATE_SIGNING_KEY:-}" ]; }; then
   echo "warning: no signing key yet, so gpad-update.json is unsigned" >&2
@@ -85,7 +135,7 @@ else
   [ -f "$public" ] || fail "no tool/update_public_key.pem; see docs/releasing.md"
   [ -n "${GPAD_UPDATE_SIGNING_KEY:-}" ] ||
     fail "GPAD_UPDATE_SIGNING_KEY isn't set; see docs/releasing.md"
-  printf '%s\n' "$GPAD_UPDATE_SIGNING_KEY" >"$staging/key.pem"
+  signing_key "$GPAD_UPDATE_SIGNING_KEY" "$staging/key.pem"
   openssl pkeyutl -sign -inkey "$staging/key.pem" -rawin -in "$manifest" \
     -out "$staging/signature"
   openssl pkeyutl -verify -pubin -inkey "$public" -rawin -in "$manifest" \

@@ -152,6 +152,14 @@ void main() {
       }
     });
 
+    test('the key CI builds in is one GPad takes', () {
+      // CI passes the PEM file's second line, as GPAD_UPDATE_KEY.
+      final pem = File('tool/update_public_key.pem').readAsLinesSync();
+      expect(pem.first, '-----BEGIN PUBLIC KEY-----');
+      expect(pem.last, '-----END PUBLIC KEY-----');
+      expect(ReleaseManifest.publicKeyFrom(pem[1]), hasLength(32));
+    });
+
     test('only an Ed25519 public key is taken', () {
       expect(ReleaseManifest.publicKeyFrom(_openSslKey), hasLength(32));
       // An X25519 key, which is for encrypting, not signing.

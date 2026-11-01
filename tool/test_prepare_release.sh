@@ -133,6 +133,44 @@ refuses v1.2.3 'no tool/update_public_key.pem' \
 setup 1.2.3
 signing=$(cat "$work/other.pem")
 refuses v1.2.3 "doesn't match tool/update_public_key.pem" "another key"
+setup 1.2.3
+signing=$(cat "$work/public.pem")
+refuses v1.2.3 "holds the public key" "the public key as the secret"
+setup 1.2.3
+signing="C:\\Users\\jason\\gpad-update-signing-key.pem"
+refuses v1.2.3 "looks like a file name" "the key's file name as the secret"
+setup 1.2.3
+signing=$(head -c 40 "$work/private.pem")
+refuses v1.2.3 "cut short" "part of the key"
+setup 1.2.3
+signing="-----BEGIN OPENSSH PRIVATE KEY-----"
+refuses v1.2.3 "an SSH key" "an SSH key"
+setup 1.2.3
+signing=$(openssl req -x509 -key "$work/private.pem" -subj /CN=x 2>/dev/null)
+refuses v1.2.3 "some other kind of key" "a certificate"
+setup 1.2.3
+signing=$(sed -n 2p "$work/public.pem")
+refuses v1.2.3 "the public key's middle line" "the public key's middle line"
+setup 1.2.3
+dash=$(printf '\342\200\224') # an em dash, as a word processor makes one
+signing=$(sed "s/-----/$dash/g" "$work/private.pem")
+refuses v1.2.3 "characters a key file never has" "curly dashes"
+setup 1.2.3
+signing="not a key"
+refuses v1.2.3 "it's 9 characters on 1 line(s), with no -----BEGIN line" \
+  "not a key"
+
+# The key goes in however it was pasted.
+for paste in "one line:$(tr '\n' ' ' <"$work/private.pem")" \
+  "Windows line ends:$(sed 's/$/\r/' "$work/private.pem")" \
+  "middle line only:$(sed -n 2p "$work/private.pem")" \
+  "spaces around it:  $(cat "$work/private.pem")
+  "; do
+  setup 1.2.3
+  signing=${paste#*:}
+  prepare v1.2.3 && [ -f "$work/out/gpad-update.json.sig" ] ||
+    fail "key pasted as ${paste%%:*}: $(cat "$work/log")"
+done
 
 # A dry run before the key is made goes on, unsigned; with the wrong key,
 # it stops as a release would.
