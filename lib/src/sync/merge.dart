@@ -115,37 +115,56 @@ class _FieldMerge {
 
   /// Whether both sides changed [key] to different values.
   bool conflicts(String key) {
-    final l = local[key];
-    final r = remote[key];
+    final l = _value(local, key);
+    final r = _value(remote, key);
     if (sameData(l, r)) return false;
     final base = this.base;
     if (base == null) return true;
-    return !sameData(l, base[key]) && !sameData(r, base[key]);
+    final b = _value(base, key);
+    return !sameData(l, b) && !sameData(r, b);
   }
 
-  /// The side whose value of [key] to keep.
+  /// The side whose value of [key] to keep. A field one side doesn't have
+  /// differs from one it has, even as null, so a field a newer GPad removed
+  /// stays removed.
   Map<String, Object?> sideOf(String key) {
-    if (sameData(local[key], remote[key])) return local;
+    final l = _value(local, key);
+    final r = _value(remote, key);
+    if (sameData(l, r)) return local;
     final base = this.base;
     if (base != null) {
-      if (sameData(local[key], base[key])) return remote;
-      if (sameData(remote[key], base[key])) return local;
+      final b = _value(base, key);
+      if (sameData(l, b)) return remote;
+      if (sameData(r, b)) return local;
     }
     return localNewer ? local : remote;
   }
 
   Map<String, Object?> all() => {
     for (final key in {...local.keys, ...remote.keys})
-      key: switch (key) {
-        'createdAt' => _min(local[key], remote[key]),
-        'updatedAt' => _max(local[key], remote[key]),
-        _ => sideOf(key)[key],
-      },
+      if (sideOf(key) case final side when side.containsKey(key))
+        key: switch (key) {
+          'createdAt' => _min(local[key], remote[key]),
+          'updatedAt' => _max(local[key], remote[key]),
+          _ => side[key],
+        },
   };
+
+  /// [key]'s value in [data], or [_absent] if [data] has no [key].
+  static Object? _value(Map<String, Object?> data, String key) =>
+      data.containsKey(key) ? data[key] : _absent;
+
+  static const _absent = _Absent();
 
   static Object? _min(Object? a, Object? b) =>
       a is int && b is int ? (a < b ? a : b) : a ?? b;
 
   static Object? _max(Object? a, Object? b) =>
       a is int && b is int ? (a > b ? a : b) : a ?? b;
+}
+
+/// Stands for a field a record doesn't have, which is not the same as one
+/// it has as null.
+class _Absent {
+  const _Absent();
 }

@@ -673,6 +673,33 @@ void main() {
       expect(dataOf(note.id)['context'], context);
     });
 
+    test('a field it removes stays removed, and a null stays null', () async {
+      final note = work.write('Pasted', 'from the web');
+      await work.sync();
+      saveAsNewer(note.id, (r) {
+        final data = r['data'] as Map;
+        data['context'] = context;
+        data['pinned'] = true;
+      });
+      await home.sync();
+      // Changed here while the newer GPad removed one field and cleared
+      // the other.
+      home.notepad.editText(home.note('Pasted'), 'edited at home');
+      saveAsNewer(note.id, (r) {
+        final data = r['data'] as Map;
+        data.remove('context');
+        data['pinned'] = null;
+      });
+
+      await home.sync();
+      expect(home.note('Pasted').unknownFields, {'pinned': null});
+      final data = dataOf(note.id);
+      expect(data['text'], 'edited at home');
+      expect(data.containsKey('context'), isFalse);
+      expect(data.containsKey('pinned'), isTrue);
+      expect(data['pinned'], isNull);
+    });
+
     test(
       'its fields stay with the text they came with in a conflict',
       () async {
