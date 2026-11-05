@@ -139,18 +139,21 @@ begin
     'could delete, so GPad won''t install there. Pick a new or empty folder.';
 end;
 
+// Setup calls this when silent too, where it would wait for a click that
+// never comes; PrepareToInstall checks then instead.
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = wpSelectDir) and not IsFolderForGPad(WizardDirValue) then
+  if (CurPageID = wpSelectDir) and not WizardSilent and
+     not IsFolderForGPad(WizardDirValue) then
   begin
-    MsgBox(FolderTakenMessage(WizardDirValue), mbError, MB_OK);
+    SuppressibleMsgBox(FolderTakenMessage(WizardDirValue), mbError, MB_OK, IDOK);
     Result := False;
   end;
 end;
 
-// Runs whether or not Setup shows its pages, so a folder given with /DIR
-// is checked too.
+// Runs whether or not Setup shows its pages, so a silent install, or a
+// folder given with /DIR, is checked too.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
