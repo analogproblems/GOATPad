@@ -701,6 +701,55 @@ void main() {
     });
 
     test(
+      'a folder field it removes stays removed, a null stays null',
+      () async {
+        final clips = work.notepad.createFolder(name: 'Clips');
+        await work.sync();
+        saveAsNewer(clips.id, (r) {
+          final data = r['data'] as Map;
+          data['color'] = 'teal';
+          data['icon'] = 'star';
+        });
+        await home.sync();
+        home.notepad.renameFolder(home.notepad.folders.single, 'Web clips');
+        saveAsNewer(clips.id, (r) {
+          final data = r['data'] as Map;
+          data.remove('color');
+          data['icon'] = null;
+        });
+
+        await home.sync();
+        expect(home.notepad.folders.single.unknownFields, {'icon': null});
+        final data = dataOf(clips.id);
+        expect(data['name'], 'Web clips');
+        expect(data.containsKey('color'), isFalse);
+        expect(data.containsKey('icon'), isTrue);
+        expect(data['icon'], isNull);
+      },
+    );
+
+    test('a field it removes in a conflict stays with the text here', () async {
+      final note = work.write('Pasted', 'from the web');
+      await work.sync();
+      saveAsNewer(note.id, (r) => (r['data'] as Map)['context'] = context);
+      await home.sync();
+      home.notepad.editText(home.note('Pasted'), 'edited at home');
+      saveAsNewer(note.id, (r) {
+        final data = r['data'] as Map;
+        data['text'] = 'pasted again';
+        data.remove('context');
+      });
+
+      await home.sync();
+      expect(home.note('Pasted').text, 'edited at home');
+      expect(home.note('Pasted').unknownFields, {'context': context});
+      expect(dataOf(note.id)['context'], context);
+      final copy = home.note('Pasted (conflict from Laptop)');
+      expect(copy.text, 'pasted again');
+      expect(copy.unknownFields, isEmpty);
+    });
+
+    test(
       'its fields stay with the text they came with in a conflict',
       () async {
         final note = work.write('Pasted', 'from the web');

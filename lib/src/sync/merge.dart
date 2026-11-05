@@ -78,7 +78,8 @@ MergeResult _mergeNote(_FieldMerge merge, String remoteDevice) {
     'titleEdited',
     'mode',
     'language',
-    for (final key in merged.keys)
+    // Both sides' fields: one the other machine removed is still here.
+    for (final key in {...merged.keys, ...local.keys})
       if (!noteFieldNames.contains(key)) key,
   ]) {
     if (local.containsKey(key)) {
