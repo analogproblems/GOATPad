@@ -48,9 +48,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 
-; GPad holds this mutex while it runs (windows/runner/main.cpp). Setup and
-; Uninstall wait for it to be closed, rather than closing it themselves.
-AppMutex=GPad.Running
+; GPad holds these mutexes while it runs (windows/runner/main.cpp): one in
+; its own session, and one every session sees, so an administrator's Setup or
+; Uninstall for an /ALLUSERS install sees GPad open in another person's
+; session too. They wait for GPad to be closed, rather than closing it.
+AppMutex=GPad.Running,Global\GPad.Running
 CloseApplications=no
 
 WizardStyle=modern dynamic windows11
@@ -89,7 +91,8 @@ Filename: "{app}\gpad.exe"; Description: "{cm:LaunchProgram,GPad}"; Flags: nowai
 
 [UninstallDelete]
 ; Self-updates replace GPad's files without the installer, and a later
-; version can bring files this installer never knew about.
+; version can bring files this installer never knew about. The folder holds
+; nothing but GPad (see IsFolderForGPad below).
 Type: filesandordirs; Name: "{app}\data"
 Type: files; Name: "{app}\*.dll"
 Type: filesandordirs; Name: "{app}\.gpad-update"
@@ -97,14 +100,25 @@ Type: filesandordirs; Name: "{app}\.gpad-old"
 Type: files; Name: "{app}\.gpad-*"
 
 [Code]
-// Whether Dir is missing, empty, or GPad's already. Uninstalling deletes
-// every DLL in the folder, so it must be one GPad doesn't share.
+const
+  // Where this installer lists GPad among installed apps, as AppId names it.
+  EntryKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{897E6F70-EBD0-4396-8FA0-41AD9320D1E2}_is1';
+
+// Whether GPad may go in Dir: a new or empty folder, or the one this
+// installer put GPad in before, which was new or empty then. Installing
+// replaces its data folder, and uninstalling deletes every DLL in it, so it
+// must hold nothing but GPad. A folder with gpad.exe in it isn't enough: a
+// portable GPad may share its folder with other programs.
 function IsFolderForGPad(Dir: String): Boolean;
 var
+  Installed: String;
   FindRec: TFindRec;
 begin
   Result := True;
-  if not DirExists(Dir) or FileExists(AddBackslash(Dir) + 'gpad.exe') then
+  if not DirExists(Dir) then
+    Exit;
+  if RegQueryStringValue(HKA, EntryKey, 'Inno Setup: App Path', Installed) and
+     (CompareText(AddBackslash(Installed), AddBackslash(Dir)) = 0) then
     Exit;
   if FindFirst(AddBackslash(Dir) + '*', FindRec) then
   begin
@@ -121,8 +135,8 @@ end;
 
 function FolderTakenMessage(Dir: String): String;
 begin
-  Result := Dir + ' already holds other files, so GPad won''t install ' +
-    'there. Pick an empty folder, or the one GPad is in.';
+  Result := Dir + ' already holds other files, which uninstalling GPad ' +
+    'could delete, so GPad won''t install there. Pick a new or empty folder.';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

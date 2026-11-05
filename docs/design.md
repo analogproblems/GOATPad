@@ -645,17 +645,26 @@ of scope above.
     MSIX was ruled out: it must be signed with a certificate Windows trusts,
     and it installs into a folder the app can't change, so self-updates
     would have to go through the Store or App Installer instead.
-  - GPad holds a mutex, `GPad.Running`, while it runs. Setup and Uninstall
-    wait for it to be gone, asking the person to quit GPad (from the tray
-    too), rather than closing it themselves.
+  - GPad holds two mutexes while it runs: `GPad.Running` in its own session,
+    and `Global\GPad.Running`, which every session sees, so an
+    administrator's Setup or Uninstall for an `/ALLUSERS` install sees GPad
+    open in another person's session too. Anyone signed in may only wait on
+    the global one (its DACL grants Authenticated Users `SYNCHRONIZE`, and
+    its owner everything), and each GPad opens it for `SYNCHRONIZE` alone, so
+    it lasts while any GPad runs. Setup and Uninstall wait for both to be
+    gone, asking the person to quit GPad (from the tray too), rather than
+    closing it themselves.
   - Installing over GPad clears what a self-update left behind
     (`.gpad-update`, `.gpad-old`, `.gpad-replacing`), so an unfinished
     update can't put old files back over the new ones, and replaces `data`,
     so no older version's assets linger.
   - Self-updates bring files the installer never knew about, so Uninstall
     deletes `data`, every DLL and every `.gpad-*` file in GPad's folder, then
-    the folder. Since that would take other programs' DLLs too, Setup only
-    installs into a folder that is new, empty or GPad's already. Notes, in
+    the folder. Since that would take other programs' files too, the folder
+    must be GPad's alone: Setup only installs into a folder that is new or
+    empty, or the one its own entry among installed apps says it installed
+    GPad in before (which was new or empty then). `gpad.exe` in a folder
+    proves nothing, since a portable GPad may share its folder. Notes, in
     `%LOCALAPPDATA%\GPad`, are never touched.
   - Windows shows the version from the installer's entry, which a
     self-update doesn't change, so the new version, finishing the update,
@@ -664,9 +673,13 @@ of scope above.
     installer's `AppId`, which must never change.
   - IT can install for every account with `/ALLUSERS`, into Program Files.
     GPad can't write there, so it only says when a new version is out.
-  - CI installs GPad with the installer, starts it, checks the installer and
-    uninstaller wait while it is open, finishes a self-update in it, installs
-    over that, and uninstalls it (`windows/installer/test_installer.ps1`).
+  - CI installs GPad with the installer, starts it, checks both mutexes and
+    the global one's DACL, checks the installer and uninstaller wait while it
+    is open, finishes a self-update in it, installs over that, and
+    uninstalls it. It also checks Setup refuses a folder holding other files
+    (even with `gpad.exe` among them) and takes an empty one
+    (`windows/installer/test_installer.ps1`). It can't open a second
+    person's session, so that case rests on the global mutex's DACL.
 - Linux: a .deb (installs to `/opt/gpad`, with a `gpad` command and a menu
   entry) and an AppImage (one file, runs on most distributions without
   installing). CI builds both with `linux/packaging/package.sh`. The tools

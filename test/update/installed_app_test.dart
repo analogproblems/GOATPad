@@ -37,6 +37,8 @@ void main() {
         '${installerAppId}_is1',
       ),
     );
+    // Where Setup finds the folder it installed GPad in before.
+    expect(script, contains("EntryKey = '$installedAppKey';"));
   });
 
   group('the version an installed GPad shows', () {
