@@ -7,6 +7,8 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 
+import '../version.dart';
+import 'installed_app.dart';
 import 'release_manifest.dart';
 
 /// How this copy of GPad was installed, which decides how it updates.
@@ -264,7 +266,12 @@ class WindowsFolderInstallation extends Installation {
 
   /// Run by the new `gpad.exe` from the staging folder, with the arguments
   /// [finishArgument] lists: puts its files in place of the old GPad's.
-  static Future<void> finish(List<String> arguments) async {
+  /// If the installer put GPad there, has Windows' list of installed apps
+  /// show the new version too ([installedApp], on Windows).
+  static Future<void> finish(
+    List<String> arguments, {
+    InstalledAppEntry? installedApp,
+  }) async {
     if (arguments case [final dir, final pidText, ...final rest]) {
       final oldPid = int.tryParse(pidText);
       if (oldPid != null) _waitForExit(oldPid);
@@ -273,6 +280,8 @@ class WindowsFolderInstallation extends Installation {
           dir,
           Directory(p.join(dir, stagingName, _zipFolder)),
         );
+        final entry = Platform.isWindows ? const InstalledAppEntry() : null;
+        (installedApp ?? entry)?.updateVersion(dir, gpadVersion);
       } on Object catch (e) {
         await _writeFailure(dir, '$e');
       }

@@ -631,11 +631,55 @@ of scope above.
 
 ## Release (step 4)
 
-- Windows: a portable zip that runs without admin rights, then an installer.
-  The zip carries the Visual C++ runtime DLLs next to `gpad.exe`, since
-  many machines (including the first one we tried) don't have them.
-  Unsigned builds show a SmartScreen warning on first run; code signing costs
-  money and can come later.
+- Windows: an installer, and a portable zip that runs without admin rights.
+  Both carry the Visual C++ runtime DLLs next to `gpad.exe`, since many
+  machines (including the first one we tried) don't have them. Unsigned
+  builds show a SmartScreen warning on first run; code signing costs money
+  and can come later.
+  - The installer (`windows/installer/gpad.iss`) is made with Inno Setup 7,
+    which CI downloads pinned by SHA-256. It installs for the person running
+    it, in `%LOCALAPPDATA%\Programs\GPad`, so it needs no admin rights
+    (work PCs often withhold them) and GPad can update itself there exactly
+    as it does from the zip. It adds a Start menu shortcut, an optional
+    desktop one, and an entry in **Settings → Apps** for uninstalling.
+    MSIX was ruled out: it must be signed with a certificate Windows trusts,
+    and it installs into a folder the app can't change, so self-updates
+    would have to go through the Store or App Installer instead.
+  - GPad holds two mutexes while it runs: `GPad.Running` in its own session,
+    and `Global\GPad.Running`, which every session sees, so an
+    administrator's Setup or Uninstall for an `/ALLUSERS` install sees GPad
+    open in another person's session too. Anyone signed in may only wait on
+    the global one (its DACL grants Authenticated Users `SYNCHRONIZE`, and
+    its owner everything), and each GPad opens it for `SYNCHRONIZE` alone, so
+    it lasts while any GPad runs. Setup and Uninstall wait for both to be
+    gone, asking the person to quit GPad (from the tray too), rather than
+    closing it themselves.
+  - Installing over GPad clears what a self-update left behind
+    (`.gpad-update`, `.gpad-old`, `.gpad-replacing`), so an unfinished
+    update can't put old files back over the new ones, and replaces `data`,
+    so no older version's assets linger.
+  - Self-updates bring files the installer never knew about, so Uninstall
+    deletes `data`, every DLL and every `.gpad-*` file in GPad's folder, then
+    the folder. Since that would take other programs' files too, the folder
+    must be GPad's alone: Setup only installs into a folder that is new or
+    empty, or the one its own entry among installed apps says it installed
+    GPad in before (which was new or empty then). `gpad.exe` in a folder
+    proves nothing, since a portable GPad may share its folder. Notes, in
+    `%LOCALAPPDATA%\GPad`, are never touched.
+  - Windows shows the version from the installer's entry, which a
+    self-update doesn't change, so the new version, finishing the update,
+    updates the entry's `DisplayVersion` itself, if the entry's
+    `InstallLocation` is the folder it updated. The entry is named by the
+    installer's `AppId`, which must never change.
+  - IT can install for every account with `/ALLUSERS`, into Program Files.
+    GPad can't write there, so it only says when a new version is out.
+  - CI installs GPad with the installer, starts it, checks both mutexes and
+    the global one's DACL, checks the installer and uninstaller wait while it
+    is open, finishes a self-update in it, installs over that, and
+    uninstalls it. It also checks Setup refuses a folder holding other files
+    (even with `gpad.exe` among them) and takes an empty one
+    (`windows/installer/test_installer.ps1`). It can't open a second
+    person's session, so that case rests on the global mutex's DACL.
 - Linux: a .deb (installs to `/opt/gpad`, with a `gpad` command and a menu
   entry) and an AppImage (one file, runs on most distributions without
   installing). CI builds both with `linux/packaging/package.sh`. The tools
@@ -648,7 +692,7 @@ of scope above.
   Flatpak can come later.
 - GitHub Releases built by CI. Pushing a version tag on `main` runs the
   whole of CI again, without caches, then drafts a release with the Windows
-  zip, the .deb, the AppImage, their SHA-256 sums and a signed build
+  installer and zip, the .deb, the AppImage, their SHA-256 sums and a signed build
   attestation for each. A maintainer publishes the draft. The tag must
   match `pubspec.yaml` and have a section in `CHANGELOG.md`, which becomes
   the notes. See [releasing.md](releasing.md). No telemetry.
@@ -685,9 +729,10 @@ GPad runs nothing it hasn't checked against a key built into it.
     old one and renamed over it, which Linux allows while the old one runs.
     The next start runs the new version. Restart now starts it once this
     one quits.
-  - **Windows zip** (`gpad.exe` in a folder GPad can write to): Windows
-    won't replace a running program's files, so the zip is unzipped into
-    `.gpad-update` in that folder, refusing names outside its `GPad` folder.
+  - **Windows zip or installer** (`gpad.exe` in a folder GPad can write
+    to, as the installer's is): Windows won't replace a running program's
+    files, so the zip is unzipped into `.gpad-update` in that folder,
+    refusing names outside its `GPad` folder.
     When GPad quits, it starts the new `gpad.exe` from there with
     `--gpad-finish-update <folder> <process id> [--relaunch]`, which waits
     for the old GPad to end, moves each file it replaces into `.gpad-old`,

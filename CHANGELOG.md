@@ -2,6 +2,15 @@
 
 Each release's notes on GitHub come from its section here.
 
+## Unreleased
+
+- **A Windows installer.** `GPad-<version>-windows-x64-setup.exe` installs
+  GPad for you alone, with no admin rights, adds it to the Start menu (and,
+  if you like, the desktop), and lists it in **Settings → Apps** for
+  uninstalling. GPad keeps itself up to date there, and uninstalling keeps
+  your notes. The portable zip is still there for running GPad without
+  installing it.
+
 ## 0.1.0
 
 The first release of GPad, for Windows and Linux.

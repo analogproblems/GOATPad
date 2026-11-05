@@ -161,8 +161,9 @@ jobs:
           # Release builds start clean: a cache can be filled by any branch.
           cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Sync's files, folder watching and Credential Manager behave
-      # differently on Windows, so its tests run here too.
-      - run: flutter test test/sync
+      # differently on Windows, so its tests run here too, as do those of
+      # the registry entry the installer makes.
+      - run: flutter test test/sync test/update/installed_app_test.dart
       - name: Build
         env:
           GPAD_GOOGLE_CLIENT_ID: ${{ secrets.GPAD_GOOGLE_CLIENT_ID }}
@@ -190,10 +191,51 @@ jobs:
             Copy-Item -Path "$env:WINDIR\System32\$dll" -Destination $release -ErrorAction Stop
           }
           Get-ChildItem $release -Filter *.dll | Format-Table Name, Length
+      # The installer: for one person, with no admin rights, in a folder
+      # GPad updates itself in as it does from the zip. Inno Setup is pinned
+      # by SHA-256, like the AppImage tools.
+      - name: Install Inno Setup
+        shell: pwsh
+        env:
+          INNO_SETUP_URL: https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe
+          INNO_SETUP_SHA256: 8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
+        run: |
+          $download = "$env:RUNNER_TEMP\innosetup-setup.exe"
+          Invoke-WebRequest -Uri $env:INNO_SETUP_URL -OutFile $download
+          $hash = (Get-FileHash -Algorithm SHA256 $download).Hash.ToLower()
+          if ($hash -ne $env:INNO_SETUP_SHA256) {
+            throw "Inno Setup's download has SHA-256 $hash, not $env:INNO_SETUP_SHA256"
+          }
+          $setup = Start-Process $download -Wait -PassThru -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$env:RUNNER_TEMP\innosetup"
+          if ($setup.ExitCode -ne 0) { throw "Inno Setup didn't install ($($setup.ExitCode))" }
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version: *([0-9.]+)').Matches[0].Groups[1].Value
+          & "$env:RUNNER_TEMP\innosetup\ISCC.exe" /Qp "/DAppVersion=$version" `
+            "/DBuildDir=$PWD\build\windows\x64\runner\Release" "/O$PWD\dist" windows\installer\gpad.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          "GPAD_VERSION=$version" >> $env:GITHUB_ENV
+      # Installs it, starts GPad, finishes a self-update in it, installs over
+      # it and uninstalls it, on this throwaway machine.
+      - name: Test the installer
+        shell: pwsh
+        run: >
+          ./windows/installer/test_installer.ps1
+          -Setup dist/GPad-${{ env.GPAD_VERSION }}-windows-x64-setup.exe
+          -Build build/windows/x64/runner/Release
+          -Version ${{ env.GPAD_VERSION }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gpad-windows-x64
           path: build/windows/x64/runner/Release
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gpad-windows-setup
+          path: dist/*-setup.exe
+          if-no-files-found: error
           retention-days: 14
 
   release:

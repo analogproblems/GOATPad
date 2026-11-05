@@ -45,8 +45,10 @@ setup() {
   cp "$work/public.pem" "$work/repo/tool/update_public_key.pem"
 
   mkdir -p "$work/builds/gpad-windows-x64/data" \
-    "$work/builds/gpad-linux-deb" "$work/builds/gpad-linux-appimage"
+    "$work/builds/gpad-windows-setup" "$work/builds/gpad-linux-deb" \
+    "$work/builds/gpad-linux-appimage"
   echo exe >"$work/builds/gpad-windows-x64/gpad.exe"
+  echo setup >"$work/builds/gpad-windows-setup/GPad-$1-windows-x64-setup.exe"
   echo app >"$work/builds/gpad-windows-x64/data/app.so"
   echo deb >"$work/builds/gpad-linux-deb/gpad_$1_amd64.deb"
   echo appimage >"$work/builds/gpad-linux-appimage/GPad-$1-x86_64.AppImage"
@@ -76,13 +78,15 @@ key=$(cat "$work/private.pem")
 setup 1.2.3
 if prepare v1.2.3; then
   out="$work/out"
-  expected="GPad-1.2.3-windows-x64.zip GPad-1.2.3-x86_64.AppImage SHA256SUMS gpad-update.json gpad-update.json.sig gpad_1.2.3_amd64.deb"
+  expected="GPad-1.2.3-windows-x64-setup.exe GPad-1.2.3-windows-x64.zip GPad-1.2.3-x86_64.AppImage SHA256SUMS gpad-update.json gpad-update.json.sig gpad_1.2.3_amd64.deb"
   [ "$(cd "$out" && echo *)" = "$expected" ] ||
     fail "release holds $(cd "$out" && echo *)"
   [ "$(unzip -Z1 "$out/GPad-1.2.3-windows-x64.zip" | sort | tr '\n' ' ')" = \
     "GPad/ GPad/data/ GPad/data/app.so GPad/gpad.exe " ] ||
     fail "zip holds $(unzip -Z1 "$out/GPad-1.2.3-windows-x64.zip" | tr '\n' ' ')"
   [ -x "$out/GPad-1.2.3-x86_64.AppImage" ] || fail "AppImage isn't executable"
+  [ "$(cat "$out/GPad-1.2.3-windows-x64-setup.exe")" = setup ] ||
+    fail "installer is $(cat "$out/GPad-1.2.3-windows-x64-setup.exe")"
   (cd "$out" && sha256sum --check --quiet SHA256SUMS) || fail "SHA256SUMS"
   grep -q "What's new in 1.2.3" "$work/notes.md" &&
     ! grep -q 'Something older' "$work/notes.md" ||
@@ -100,6 +104,9 @@ if prepare v1.2.3; then
   done
   [ "$(jq -r '"\(."gpad-update") \(.version)"' "$manifest")" = "1 1.2.3" ] ||
     fail "manifest is $(cat "$manifest")"
+  [ "$(jq -r '.files | keys | join(" ")' "$manifest")" = \
+    "linux-x64-appimage linux-x64-deb windows-x64-zip" ] ||
+    fail "manifest has $(jq -r '.files | keys | join(" ")' "$manifest")"
   base64 -d "$manifest.sig" >"$work/signature"
   openssl pkeyutl -verify -pubin -inkey "$work/public.pem" -rawin \
     -in "$manifest" -sigfile "$work/signature" >/dev/null ||
@@ -123,6 +130,9 @@ refuses v1.2.3 'x86_64.AppImage' "no AppImage"
 setup 1.2.3
 rm "$work/builds/gpad-windows-x64/gpad.exe"
 refuses v1.2.3 'no gpad.exe' "no gpad.exe"
+setup 1.2.3
+rm "$work/builds/gpad-windows-setup/GPad-1.2.3-windows-x64-setup.exe"
+refuses v1.2.3 'windows-x64-setup.exe' "no installer"
 setup 1.2.3
 signing=
 refuses v1.2.3 "GPAD_UPDATE_SIGNING_KEY isn't set" "no signing key"

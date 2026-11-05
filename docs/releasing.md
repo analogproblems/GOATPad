@@ -42,9 +42,10 @@ replace a key that is already there. Then:
 1. In a pull request, set the new version in `pubspec.yaml` (for example
    `version: 0.2.0+2`: the part before `+` is the version, the part after
    is the build number, one higher each release) and in
-   `lib/src/version.dart` (a test checks the two match), and add a
-   `## 0.2.0` section to [CHANGELOG.md](../CHANGELOG.md) saying what
-   changed, for the people who use GPad.
+   `lib/src/version.dart` (a test checks the two match), and turn
+   `## Unreleased` in [CHANGELOG.md](../CHANGELOG.md) into `## 0.2.0`
+   (or add that section), saying what changed, for the people who use
+   GPad.
 2. Merge it once CI passes and it's reviewed.
 3. Tag the merged commit on `main` and push the tag:
 
@@ -84,7 +85,8 @@ also tests `tool/prepare_release.sh` with stand-in builds
 
 | File | For |
 | --- | --- |
-| `GPad-<version>-windows-x64.zip` | Windows 10 and 11. Unzip anywhere and run `GPad\gpad.exe`; no installer or admin rights needed. |
+| `GPad-<version>-windows-x64-setup.exe` | Windows 10 and 11: the installer. Installs for the person running it, in `%LOCALAPPDATA%\Programs\GPad`, with no admin rights. IT can install for everyone in Program Files with `/ALLUSERS`; GPad can't update itself there, so it says when a new version is out. |
+| `GPad-<version>-windows-x64.zip` | Windows 10 and 11, portable. Unzip anywhere and run `GPad\gpad.exe`. GPad installed with the installer updates itself from this too. |
 | `gpad_<version>_amd64.deb` | Debian 12, Ubuntu 22.04 and newer: `sudo apt install ./gpad_<version>_amd64.deb` |
 | `GPad-<version>-x86_64.AppImage` | Any other 64-bit Linux, like Fedora: make it executable and run it. |
 | `gpad-update.json`, `gpad-update.json.sig` | What GPad's self-updates read: the version and each download's size and SHA-256, and CI's signature of it. |
