@@ -154,6 +154,47 @@ void main() {
     await _finish(tester, sync);
   });
 
+  testWidgets('what a newer GPad synced is named, not a problem', (
+    tester,
+  ) async {
+    final notepad = Notepad.load(NoteStore.inMemory());
+    final sync = _controller(notepad);
+    await tester.runAsync(() async {
+      final folder = p.join(dir.path, 'GPad');
+      await Directory(folder).create();
+      await sync.create(
+        place: FolderPlace(folder),
+        passphrase: _passphrase,
+        deviceName: 'Work PC',
+        remember: false,
+      );
+      await sync.finish();
+      // A file sealed in a format only a newer GPad writes.
+      final records = Directory(p.join(folder, 'records'))..createSync();
+      File(p.join(records.path, '${'b' * 32}.gpad'))
+          .writeAsBytesSync([...'GPAD'.codeUnits, 2, ...List.filled(64, 0)]);
+      await sync.syncNow();
+    });
+    expect(sync.status, SyncStatus.synced);
+    expect(sync.newer, hasLength(1));
+    expect(sync.unreadable, isEmpty);
+    await _pumpApp(tester, notepad, sync);
+
+    await tester.tap(_inSidebar('Synced · update GPad'));
+    await tester.pump();
+    expect(
+      find.textContaining(
+        'A newer GPad on another computer synced something this one '
+        'can\'t show yet. Update GPad to see it',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('couldn\'t be opened'), findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pump();
+    await _finish(tester, sync);
+  });
+
   testWidgets('changing the passphrase, then the recovery key', (tester) async {
     const newPassphrase = 'orange whale kite meadow';
     final notepad = Notepad.load(NoteStore.inMemory());

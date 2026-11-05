@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -81,7 +82,7 @@ class NoteStore {
   @visibleForTesting
   Database get database => _db;
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   void _migrate() {
     final version = _db.userVersion;
@@ -191,6 +192,15 @@ class NoteStore {
           ${_changeTrigger('folders', 'folder', 'DELETE', _syncedFolderColumns)}
         ''');
       }
+      if (version < 5) {
+        // Fields a newer GPad synced that this one doesn't know, as a JSON
+        // object, so they go back unchanged (see Note.unknownFields). Only
+        // sync changes them, and it keeps its own count of what it changed.
+        _db.execute('''
+          ALTER TABLE notes ADD COLUMN unknown_fields TEXT;
+          ALTER TABLE folders ADD COLUMN unknown_fields TEXT;
+        ''');
+      }
       _db.userVersion = schemaVersion;
     });
   }
@@ -244,8 +254,9 @@ class NoteStore {
 
   static const _upsertNote = '''
     INSERT INTO notes (id, title, title_edited, body, mode, language, status,
-      tab_order, awaiting_paste, created_at, updated_at, trashed_at, folder_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tab_order, awaiting_paste, created_at, updated_at, trashed_at, folder_id,
+      unknown_fields)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       title = excluded.title,
       title_edited = excluded.title_edited,
@@ -257,19 +268,21 @@ class NoteStore {
       awaiting_paste = excluded.awaiting_paste,
       updated_at = excluded.updated_at,
       trashed_at = excluded.trashed_at,
-      folder_id = excluded.folder_id
+      folder_id = excluded.folder_id,
+      unknown_fields = excluded.unknown_fields
   ''';
 
   static const _upsertFolder = '''
     INSERT INTO folders (id, parent_id, name, expanded, tabs_collapsed,
-      created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      created_at, updated_at, unknown_fields)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       parent_id = excluded.parent_id,
       name = excluded.name,
       expanded = excluded.expanded,
       tabs_collapsed = excluded.tabs_collapsed,
-      updated_at = excluded.updated_at
+      updated_at = excluded.updated_at,
+      unknown_fields = excluded.unknown_fields
   ''';
 
   List<Note> loadNotes() => [
@@ -290,6 +303,7 @@ class NoteStore {
           final int ms => _time(ms),
           _ => null,
         },
+        unknownFields: _unknownFields(row['unknown_fields'] as String?),
       ),
   ];
 
@@ -310,6 +324,7 @@ class NoteStore {
         note.updatedAt.millisecondsSinceEpoch,
         note.trashedAt?.millisecondsSinceEpoch,
         note.folderId,
+        _unknownJson(note.unknownFields),
       ]);
     }
   });
@@ -349,6 +364,7 @@ class NoteStore {
         tabsCollapsed: row['tabs_collapsed'] == 1,
         createdAt: _time(row['created_at'] as int),
         updatedAt: _time(row['updated_at'] as int),
+        unknownFields: _unknownFields(row['unknown_fields'] as String?),
       ),
   ];
 
@@ -363,6 +379,7 @@ class NoteStore {
         folder.tabsCollapsed ? 1 : 0,
         folder.createdAt.millisecondsSinceEpoch,
         folder.updatedAt.millisecondsSinceEpoch,
+        _unknownJson(folder.unknownFields),
       ]);
     }
   });
@@ -638,6 +655,13 @@ class NoteStore {
     return '${start > 0 ? '…' : ''}${text.substring(start, end)}'
         '${end < text.length ? '…' : ''}';
   }
+
+  static String? _unknownJson(Map<String, Object?> fields) =>
+      fields.isEmpty ? null : jsonEncode(fields);
+
+  static Map<String, Object?> _unknownFields(String? json) => json == null
+      ? const {}
+      : Map.unmodifiable(jsonDecode(json) as Map<String, Object?>);
 
   static ModeGuess _guess(String mode, String? language) =>
       switch (NoteMode.values.byName(mode)) {

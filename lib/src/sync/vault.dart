@@ -237,9 +237,17 @@ class Vault {
   }
 
   /// The plaintext of [file], which must have been sealed by [seal] as
-  /// record [recordId] of this vault.
+  /// record [recordId] of this vault. Throws a [FormatException] for a file
+  /// sealed in a newer GPad's format, and a [VaultException] for any other
+  /// file it can't open.
   Uint8List open(String recordId, Uint8List file) {
     final start = _magic.length + _aead.nonceBytes;
+    final format = _magic.length - 1;
+    if (file.length > format &&
+        file[format] > _magic[format] &&
+        _magic.take(format).indexed.every((e) => file[e.$1] == e.$2)) {
+      throw const FormatException('Sealed by a newer GPad');
+    }
     if (file.length < start + _aead.aBytes) {
       throw const VaultException('The file is too short');
     }

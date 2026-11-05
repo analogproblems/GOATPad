@@ -7,7 +7,12 @@ import '../notes/note_mode.dart';
 /// Which tabs are open travels too, so a note opened at work shows as a tab
 /// at home. Which tab is selected, and whether folders are expanded, stay
 /// on each machine.
+///
+/// Fields a newer GPad added, which this one doesn't know, go back as they
+/// came ([Note.unknownFields]). A newer GPad adds fields here, never
+/// changes what these ones mean, so older ones keep working.
 Map<String, Object?> noteData(Note note) => {
+  ...note.unknownFields,
   'title': note.title,
   'titleEdited': note.titleEdited,
   'text': note.text,
@@ -56,6 +61,7 @@ void applyNoteData(Note note, Map<String, Object?> data) {
   final createdAt = _time(data, 'createdAt');
   final updatedAt = _time(data, 'updatedAt');
   final trashedAt = _optionalTime(data, 'trashedAt');
+  final unknown = _unknown(data, noteFieldNames);
   note
     ..title = title
     ..titleEdited = titleEdited
@@ -67,10 +73,28 @@ void applyNoteData(Note note, Map<String, Object?> data) {
     ..folderId = folder
     ..createdAt = createdAt
     ..updatedAt = updatedAt
-    ..trashedAt = trashedAt;
+    ..trashedAt = trashedAt
+    ..unknownFields = unknown;
 }
 
+/// The note fields this GPad knows, as [noteData] names them.
+const noteFieldNames = {
+  'title',
+  'titleEdited',
+  'text',
+  'mode',
+  'language',
+  'status',
+  'tabOrder',
+  'awaitingPaste',
+  'folder',
+  'createdAt',
+  'updatedAt',
+  'trashedAt',
+};
+
 Map<String, Object?> folderData(Folder folder) => {
+  ...folder.unknownFields,
   'name': folder.name,
   'parent': folder.parentId,
   'createdAt': folder.createdAt.millisecondsSinceEpoch,
@@ -93,12 +117,23 @@ void applyFolderData(Folder folder, Map<String, Object?> data) {
   final parent = _optional<String>(data, 'parent');
   final createdAt = _time(data, 'createdAt');
   final updatedAt = _time(data, 'updatedAt');
+  final unknown = _unknown(data, _folderKeys);
   folder
     ..name = name
     ..parentId = parent
     ..createdAt = createdAt
-    ..updatedAt = updatedAt;
+    ..updatedAt = updatedAt
+    ..unknownFields = unknown;
 }
+
+const _folderKeys = {'name', 'parent', 'createdAt', 'updatedAt'};
+
+/// The fields of [data] not in [known], which a newer GPad added.
+Map<String, Object?> _unknown(Map<String, Object?> data, Set<String> known) =>
+    Map.unmodifiable({
+      for (final MapEntry(:key, :value) in data.entries)
+        if (!known.contains(key)) key: value,
+    });
 
 T _required<T>(Map<String, Object?> data, String key) => switch (data[key]) {
   final T value => value,

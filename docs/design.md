@@ -279,9 +279,11 @@ The choices are saved with the other settings.
   language, status open/closed/trashed, tab order, timestamps), `folders`
   (random id, parent, name, whether it is expanded in the sidebar and folded
   in the tab strip), `settings` (theme, selected tab, sync settings) and
-  `sync_records` (what sync has uploaded; see Sync). The version lives
-  in `PRAGMA user_version` (4 since sync); older databases are upgraded
-  in place and a database from a newer GPad is refused rather than changed.
+  `sync_records` (what sync has uploaded; see Sync). Notes and folders
+  also keep the fields a newer GPad synced that this one doesn't know
+  (see Sync). The version lives in `PRAGMA user_version` (5 since 0.1.1
+  kept those fields); older databases are upgraded in place and a
+  database from a newer GPad is refused rather than changed.
   Random ids mean notes and folders made on two machines never clash once
   sync arrives. A note or folder whose folder is missing loads at the top
   level, so nothing can go missing from the sidebar.
@@ -352,6 +354,14 @@ GPad/
 - **A record** is JSON inside the encryption: kind, id, a version vector,
   the device that saved it and its name, when, and the data (or nothing,
   for a delete, which is kept so other machines learn about it).
+- **Newer GPads add, older ones keep.** A newer GPad adds fields to a
+  record's data (where a paste came from, say) and never changes what the
+  existing ones mean. An older GPad keeps the fields it doesn't know with
+  the note or folder and sends them back unchanged, so editing a note on
+  a computer that hasn't updated yet never drops them. In a text conflict
+  they stay with the text they came with. Anything new a newer GPad can't
+  express that way (a new kind of item, a new value for a known field, a
+  new file format) is held back from older GPads, below.
 - **Version vectors** (a count per device) tell GPad whether the copy in
   the folder is the same as what it last saw, older, newer, or changed on
   two machines at once. Clocks are only used to break ties between fields.
@@ -380,9 +390,15 @@ are unchanged since last time, and opens the rest:
   goes up to the note's own file before the copy is deleted, so a change
   that only reached a copy isn't lost to computers that join later.
 - **A file that can't be opened** (damaged, changed by something else, or
-  saved by a newer GPad) is left alone and reported in the sync dialog. It
-  is tried again only once it changes. Changes here to that note wait
-  rather than replace a version this GPad can't read.
+  from another set of notes) is left alone and reported in the sync dialog
+  as a problem. It is tried again only once it changes. Changes here to
+  that note wait rather than replace a version this GPad can't read.
+- **A file a newer GPad saved** that this one can't read is left alone the
+  same way, but quietly: the sidebar says "Synced · update GPad" and the
+  sync dialog says what is waiting. GPad tells the two apart because only
+  GPad, holding the key, can write a file that decrypts, so one that
+  decrypts but doesn't make sense to this GPad comes from a newer one (as
+  does a file whose format byte is higher than this GPad writes).
 
 Then everything changed here goes up. A table in `notes.db`
 (`sync_records`), kept current by triggers, counts each note's and folder's

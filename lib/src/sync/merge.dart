@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 
+import 'record_data.dart';
 import 'sync_record.dart';
 
 const _equality = DeepCollectionEquality();
@@ -69,15 +70,23 @@ MergeResult _mergeNote(_FieldMerge merge, String remoteDevice) {
   if (!textConflict) return MergeResult(merged);
 
   // Keep the text that is here, which may be in front of someone, with
-  // what goes with it, and save the other machine's as a new note.
-  for (final key in const [
+  // what goes with it, and save the other machine's as a new note. Fields
+  // a newer GPad added may describe the text, so they stay with it too.
+  for (final key in [
     'text',
     'title',
     'titleEdited',
     'mode',
     'language',
+    // Both sides' fields: one the other machine removed is still here.
+    for (final key in {...merged.keys, ...local.keys})
+      if (!noteFieldNames.contains(key)) key,
   ]) {
-    merged[key] = local[key];
+    if (local.containsKey(key)) {
+      merged[key] = local[key];
+    } else {
+      merged.remove(key);
+    }
   }
   final title = switch (remote['title']) {
     final String t when t.trim().isNotEmpty => t,
@@ -107,37 +116,56 @@ class _FieldMerge {
 
   /// Whether both sides changed [key] to different values.
   bool conflicts(String key) {
-    final l = local[key];
-    final r = remote[key];
+    final l = _value(local, key);
+    final r = _value(remote, key);
     if (sameData(l, r)) return false;
     final base = this.base;
     if (base == null) return true;
-    return !sameData(l, base[key]) && !sameData(r, base[key]);
+    final b = _value(base, key);
+    return !sameData(l, b) && !sameData(r, b);
   }
 
-  /// The side whose value of [key] to keep.
+  /// The side whose value of [key] to keep. A field one side doesn't have
+  /// differs from one it has, even as null, so a field a newer GPad removed
+  /// stays removed.
   Map<String, Object?> sideOf(String key) {
-    if (sameData(local[key], remote[key])) return local;
+    final l = _value(local, key);
+    final r = _value(remote, key);
+    if (sameData(l, r)) return local;
     final base = this.base;
     if (base != null) {
-      if (sameData(local[key], base[key])) return remote;
-      if (sameData(remote[key], base[key])) return local;
+      final b = _value(base, key);
+      if (sameData(l, b)) return remote;
+      if (sameData(r, b)) return local;
     }
     return localNewer ? local : remote;
   }
 
   Map<String, Object?> all() => {
     for (final key in {...local.keys, ...remote.keys})
-      key: switch (key) {
-        'createdAt' => _min(local[key], remote[key]),
-        'updatedAt' => _max(local[key], remote[key]),
-        _ => sideOf(key)[key],
-      },
+      if (sideOf(key) case final side when side.containsKey(key))
+        key: switch (key) {
+          'createdAt' => _min(local[key], remote[key]),
+          'updatedAt' => _max(local[key], remote[key]),
+          _ => side[key],
+        },
   };
+
+  /// [key]'s value in [data], or [_absent] if [data] has no [key].
+  static Object? _value(Map<String, Object?> data, String key) =>
+      data.containsKey(key) ? data[key] : _absent;
+
+  static const _absent = _Absent();
 
   static Object? _min(Object? a, Object? b) =>
       a is int && b is int ? (a < b ? a : b) : a ?? b;
 
   static Object? _max(Object? a, Object? b) =>
       a is int && b is int ? (a > b ? a : b) : a ?? b;
+}
+
+/// Stands for a field a record doesn't have, which is not the same as one
+/// it has as null.
+class _Absent {
+  const _Absent();
 }
