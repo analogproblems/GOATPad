@@ -9,6 +9,7 @@ class Folder {
     this.parentId,
     this.expanded = true,
     this.tabsCollapsed = false,
+    this.unknownFields = const {},
   });
 
   final String id;
@@ -25,6 +26,10 @@ class Folder {
 
   DateTime createdAt;
   DateTime updatedAt;
+
+  /// Fields a newer GPad synced for this folder that this one doesn't
+  /// know, kept as they came and synced back unchanged.
+  Map<String, Object?> unknownFields;
 
   /// [name], or "Untitled folder" if it has been cleared.
   String get displayName => name.trim().isEmpty ? 'Untitled folder' : name;

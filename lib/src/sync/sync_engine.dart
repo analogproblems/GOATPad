@@ -36,9 +36,14 @@ class SyncReport {
   /// Notes changed here and on another machine at once, now kept twice.
   int conflicts = 0;
 
-  /// Files that couldn't be opened: changed, damaged, too large, from
-  /// another vault or from a newer GPad. They are left alone.
+  /// Files that couldn't be opened: changed, damaged, too large or from
+  /// another vault. They are left alone.
   final unreadable = <String>[];
+
+  /// Files a newer GPad saved in a way this one can't read, say a new kind
+  /// of item. They are left alone until GPad is updated: no problem, just
+  /// something this GPad can't show yet.
+  final newer = <String>[];
 
   /// Notes too large to sync, by id: encrypted, they would be bigger than
   /// other computers read. Changes to them wait here until they are
@@ -71,9 +76,9 @@ class SyncEngine {
   final String deviceName;
   final DateTime Function() clock;
 
-  /// Files that couldn't be opened, by name, with their tags, so they are
-  /// read again only if they change.
-  final _unreadable = <String, String?>{};
+  /// Files that couldn't be opened, by name, with their tags and whether a
+  /// newer GPad saved them, so they are read again only if they change.
+  final _unopened = <String, ({String? tag, bool newer})>{};
 
   /// Notes found too large to upload, with how far they had been changed
   /// here and which version they were, so they are encrypted again only
@@ -132,32 +137,40 @@ class SyncEngine {
             state?.remoteTag == file.tag) {
           continue;
         }
-        void unreadable() {
-          _unreadable[file.name] = file.tag;
-          report.unreadable.add(file.name);
+        void unopened({bool newer = false}) {
+          _unopened[file.name] = (tag: file.tag, newer: newer);
+          (newer ? report.newer : report.unreadable).add(file.name);
           if (file.isCanonical) blocked.add(id);
         }
 
-        if (_unreadable.containsKey(file.name) &&
-            _unreadable[file.name] == file.tag) {
-          unreadable();
+        if (_unopened[file.name] case final seen? when seen.tag == file.tag) {
+          unopened(newer: seen.newer);
+          continue;
+        }
+        final Uint8List sealed;
+        try {
+          sealed = await _step(backend.read(file));
+        } on FileTooLarge {
+          unopened();
+          continue;
+        } on FormatException {
+          unopened();
           continue;
         }
         final SyncRecord record;
         try {
-          record = _open(id, await _step(backend.read(file)));
+          // Only GPad, with the key, can have written what decrypts, so
+          // what this GPad can't make sense of came from a newer one.
+          record = _decode(id, vault.open(id, sealed));
         } on FormatException {
-          unreadable();
+          unopened(newer: true);
           continue;
         } on VaultException {
-          unreadable();
-          continue;
-        } on FileTooLarge {
-          unreadable();
+          unopened();
           continue;
         }
         if (!_absorb(record, file, report)) {
-          unreadable();
+          unopened();
           continue;
         }
         if (!file.isCanonical) copies.add(file);
@@ -201,13 +214,15 @@ class SyncEngine {
     }
   }
 
-  SyncRecord _open(String id, Uint8List file) {
-    final record = SyncRecord.decode(vault.open(id, file));
+  /// Reads the record decrypted from [id]'s file. Throws a
+  /// [FormatException] if this GPad can't.
+  SyncRecord _decode(String id, Uint8List plain) {
+    final record = SyncRecord.decode(plain);
     if (record.id != id) {
       throw const FormatException('The record inside has another id');
     }
     // Read the data the way this GPad would write it, which also checks
-    // every field.
+    // every field and keeps the ones a newer GPad added.
     final data = record.data;
     return SyncRecord(
       kind: record.kind,

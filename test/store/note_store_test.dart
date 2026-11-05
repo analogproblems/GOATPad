@@ -369,12 +369,66 @@ void main() {
       DROP TRIGGER folders_sync_update;
       DROP TRIGGER folders_sync_delete;
       DROP TABLE sync_records;
+      ALTER TABLE notes DROP COLUMN unknown_fields;
+      ALTER TABLE folders DROP COLUMN unknown_fields;
     ''');
     store.database.userVersion = 2;
     store.close();
 
     final upgraded = NoteStore.open(path);
     expect(upgraded.search('milk').single.noteId, 'a1');
+    upgraded.close();
+  });
+
+  test('fields a newer GPad synced are kept with notes and folders', () {
+    final path = '${temp.path}/notes.db';
+    final store = NoteStore.open(path);
+    const context = {
+      'context': [
+        {'app': 'Firefox', 'url': 'https://example.com/'},
+      ],
+    };
+    store.saveNote(_note()..unknownFields = context);
+    store.saveNote(_note(id: 'a2'));
+    store.saveFolder(
+      Folder(
+        id: 'f1',
+        name: 'Clips',
+        createdAt: DateTime(2026, 11, 5),
+        updatedAt: DateTime(2026, 11, 5),
+        unknownFields: const {'color': 'teal'},
+      ),
+    );
+    store.close();
+
+    final reopened = NoteStore.open(path);
+    final notes = {for (final n in reopened.loadNotes()) n.id: n};
+    expect(notes['a1']!.unknownFields, context);
+    expect(notes['a2']!.unknownFields, isEmpty);
+    expect(reopened.loadFolders().single.unknownFields, {'color': 'teal'});
+    reopened.close();
+  });
+
+  test('notes saved before newer fields were kept open without loss', () {
+    final path = '${temp.path}/notes.db';
+    final store = NoteStore.open(path);
+    store.saveNote(_note(text: 'From v0.1.0'));
+    // Back to schema 4, as GPad 0.1.0 left it.
+    store.database.execute('''
+      ALTER TABLE notes DROP COLUMN unknown_fields;
+      ALTER TABLE folders DROP COLUMN unknown_fields;
+    ''');
+    store.database.userVersion = 4;
+    store.close();
+
+    final upgraded = NoteStore.open(path);
+    final note = upgraded.loadNotes().single;
+    expect(note.text, 'From v0.1.0');
+    expect(note.unknownFields, isEmpty);
+    // The upgrade itself is no change for sync to upload again.
+    expect(upgraded.syncState('a1')!.localSeq, 1);
+    upgraded.saveNote(note..unknownFields = const {'tags': 'sql'});
+    expect(upgraded.loadNotes().single.unknownFields, {'tags': 'sql'});
     upgraded.close();
   });
 

@@ -32,9 +32,11 @@ Future<void> showSyncDialog(
   SyncStatus.syncing => (icon: Icons.sync, label: 'Syncing…'),
   SyncStatus.synced => (
     icon: Icons.cloud_done_outlined,
-    label: sync.unreadable.isEmpty && sync.tooLarge.isEmpty
-        ? 'Synced'
-        : 'Synced, with problems',
+    label: sync.unreadable.isNotEmpty || sync.tooLarge.isNotEmpty
+        ? 'Synced, with problems'
+        : sync.newer.isNotEmpty
+        ? 'Synced · update GPad'
+        : 'Synced',
   ),
   SyncStatus.problem => (icon: Icons.sync_problem, label: 'Sync problem'),
   SyncStatus.signedOut => (icon: Icons.login, label: 'Sync paused: sign in'),
@@ -967,16 +969,27 @@ class _SyncDialogState extends State<_SyncDialog> {
         Text(changed),
       ],
       if (widget.tray case final tray?) _trayBox(context, tray),
+      if (sync.newer.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(
+          'A newer GPad on another computer synced '
+          '${sync.newer.length == 1 ? 'something' : '${sync.newer.length} things'} '
+          'this one can\'t show yet. Update GPad to see '
+          '${sync.newer.length == 1 ? 'it' : 'them'}; until then GPad '
+          'leaves ${sync.newer.length == 1 ? 'it' : 'them'} as '
+          '${sync.newer.length == 1 ? 'it is' : 'they are'}.',
+        ),
+      ],
       if (sync.unreadable.isNotEmpty) ...[
         const SizedBox(height: 8),
         Text(
           '${sync.unreadable.length == 1 ? 'One file' : '${sync.unreadable.length} files'} '
           'GPad syncs with couldn\'t be opened, so GPad left '
           '${sync.unreadable.length == 1 ? 'it' : 'them'} alone. A file '
-          'changed by something other than GPad, damaged, or saved by a '
-          'newer GPad reads this way. Changes here to the '
+          'changed by something other than GPad, damaged, or from a different '
+          'set of GPad notes reads this way. Changes here to the '
           '${sync.unreadable.length == 1 ? 'note in it wait until it' : 'notes in them wait until they'} '
-          'can be read: update GPad, or delete a damaged file.',
+          'can be read: put back a good copy, or delete a damaged file.',
           style: TextStyle(color: theme.colorScheme.error),
         ),
       ],

@@ -21,6 +21,7 @@ class Note {
     this.tabOrder = 0,
     this.trashedAt,
     this.awaitingFirstPaste = false,
+    this.unknownFields = const {},
   });
 
   final String id;
@@ -48,6 +49,11 @@ class Note {
 
   /// A new, empty note picks its mode and name from the first paste.
   bool awaitingFirstPaste;
+
+  /// Fields a newer GPad synced for this note that this one doesn't know,
+  /// such as where a paste came from. Kept as they came and synced back
+  /// unchanged, so editing the note here never drops them elsewhere.
+  Map<String, Object?> unknownFields;
 
   /// Bumped when GPad renames the note, so the title field reloads. Not
   /// stored.

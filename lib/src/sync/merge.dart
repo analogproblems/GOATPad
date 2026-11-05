@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart';
 
+import 'record_data.dart';
 import 'sync_record.dart';
 
 const _equality = DeepCollectionEquality();
@@ -69,15 +70,22 @@ MergeResult _mergeNote(_FieldMerge merge, String remoteDevice) {
   if (!textConflict) return MergeResult(merged);
 
   // Keep the text that is here, which may be in front of someone, with
-  // what goes with it, and save the other machine's as a new note.
-  for (final key in const [
+  // what goes with it, and save the other machine's as a new note. Fields
+  // a newer GPad added may describe the text, so they stay with it too.
+  for (final key in [
     'text',
     'title',
     'titleEdited',
     'mode',
     'language',
+    for (final key in merged.keys)
+      if (!noteFieldNames.contains(key)) key,
   ]) {
-    merged[key] = local[key];
+    if (local.containsKey(key)) {
+      merged[key] = local[key];
+    } else {
+      merged.remove(key);
+    }
   }
   final title = switch (remote['title']) {
     final String t when t.trim().isNotEmpty => t,

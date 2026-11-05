@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -589,6 +590,167 @@ void main() {
     await home.sync();
     await work.sync();
     expect(work.note('Damaged').text, 'edited at home');
+  });
+
+  group('a newer GPad on a third computer', () {
+    File recordFile(String id) => File(p.join(folder, 'records', '$id.gpad'));
+
+    Map<String, Object?> readRecord(String id) => jsonDecode(
+      utf8.decode(made.vault.open(id, recordFile(id).readAsBytesSync())),
+    ) as Map<String, Object?>;
+
+    /// Saves [id]'s file as a newer GPad would: [change] edits the record
+    /// as JSON, and the newer GPad's save is counted in its version.
+    void saveAsNewer(String id, void Function(Map<String, Object?>) change) {
+      final record = readRecord(id);
+      final version = record['version'] as Map<String, Object?>;
+      record['version'] = {
+        ...version,
+        'newer-id': ((version['newer-id'] as int?) ?? 0) + 1,
+      };
+      record['device'] = 'newer-id';
+      record['deviceName'] = 'Laptop';
+      change(record);
+      recordFile(
+        id,
+      ).writeAsBytesSync(made.vault.seal(id, utf8.encode(jsonEncode(record))));
+    }
+
+    Map<String, Object?> dataOf(String id) =>
+        readRecord(id)['data'] as Map<String, Object?>;
+
+    const context = [
+      {'app': 'Firefox', 'url': 'https://example.com/'},
+    ];
+
+    test(
+      'its fields survive edits on computers that don\'t know them',
+      () async {
+        final note = work.write('Pasted', 'from the web');
+        final clips = work.notepad.createFolder(name: 'Clips');
+        work.notepad.moveNote(note, clips);
+        await work.sync();
+        saveAsNewer(note.id, (r) => (r['data'] as Map)['context'] = context);
+        saveAsNewer(clips.id, (r) => (r['data'] as Map)['color'] = 'teal');
+
+        await home.sync();
+        home.notepad.editText(home.note('Pasted'), 'from the web, edited');
+        final homeFolder = home.notepad.folders.single;
+        home.notepad.renameFolder(homeFolder, 'Web clips');
+        expect((await home.sync()).uploaded, 2);
+        expect(dataOf(note.id)['text'], 'from the web, edited');
+        expect(dataOf(note.id)['context'], context);
+        expect(dataOf(clips.id)['name'], 'Web clips');
+        expect(dataOf(clips.id)['color'], 'teal');
+
+        // Edited at work too, an older GPad like home.
+        await work.sync();
+        work.notepad.rename(work.note('Pasted'), 'Pasted link');
+        await work.sync();
+        expect(dataOf(note.id)['title'], 'Pasted link');
+        expect(dataOf(note.id)['context'], context);
+        // And kept on disk here.
+        final saved = work.notepad.store.loadNotes().firstWhere(
+          (n) => n.id == note.id,
+        );
+        expect(saved.unknownFields, {'context': context});
+        expect(work.notepad.store.loadFolders().single.unknownFields, {
+          'color': 'teal',
+        });
+      },
+    );
+
+    test('its fields merge with changes made here at the same time', () async {
+      final note = work.write('Pasted', 'from the web');
+      await work.sync();
+      await home.sync();
+      home.notepad.editText(home.note('Pasted'), 'edited at home');
+      saveAsNewer(note.id, (r) => (r['data'] as Map)['context'] = context);
+
+      await home.sync();
+      expect(home.note('Pasted').unknownFields, {'context': context});
+      expect(dataOf(note.id)['text'], 'edited at home');
+      expect(dataOf(note.id)['context'], context);
+    });
+
+    test(
+      'its fields stay with the text they came with in a conflict',
+      () async {
+        final note = work.write('Pasted', 'from the web');
+        await work.sync();
+        await home.sync();
+        home.notepad.editText(home.note('Pasted'), 'edited at home');
+        saveAsNewer(note.id, (r) {
+          final data = r['data'] as Map;
+          data['text'] = 'pasted again';
+          data['context'] = context;
+        });
+
+        await home.sync();
+        expect(home.note('Pasted').text, 'edited at home');
+        expect(home.note('Pasted').unknownFields, isEmpty);
+        final copy = home.note('Pasted (conflict from Laptop)');
+        expect(copy.text, 'pasted again');
+        expect(copy.unknownFields, {'context': context});
+      },
+    );
+
+    test('what it saves that this GPad can\'t read waits quietly', () async {
+      final note = work.write('Pasted', 'from the web');
+      await work.sync();
+      await home.sync();
+      // A kind of item this GPad doesn't have, a mode it doesn't know, and
+      // a newer file format.
+      final image = '${'a' * 32}.gpad';
+      recordFile('a' * 32).writeAsBytesSync(
+        made.vault.seal(
+          'a' * 32,
+          utf8.encode(
+            jsonEncode({
+              'gpad': 1,
+              'kind': 'image',
+              'id': 'a' * 32,
+              'version': {'newer-id': 1},
+              'device': 'newer-id',
+              'deviceName': 'Laptop',
+              'savedAt': 0,
+              'data': {'title': 'Screenshot'},
+            }),
+          ),
+        ),
+      );
+      saveAsNewer(note.id, (r) => (r['data'] as Map)['mode'] = 'image');
+      final sealed = made.vault.seal('b' * 32, utf8.encode('{}'));
+      recordFile('b' * 32).writeAsBytesSync(sealed..[4] = 2);
+      final before = {
+        for (final f in recordFiles())
+          f: File(p.join(folder, 'records', f)).readAsBytesSync(),
+      };
+
+      // An edit here waits rather than replace the newer GPad's version.
+      home.notepad.editText(home.note('Pasted'), 'edited at home');
+      var report = await home.sync();
+      expect(
+        report.newer..sort(),
+        [image, '${note.id}.gpad', '${'b' * 32}.gpad']..sort(),
+      );
+      expect(report.unreadable, isEmpty);
+      expect(report.uploaded, 0);
+      report = await home.sync();
+      expect(report.newer, hasLength(3));
+      for (final MapEntry(key: name, value: bytes) in before.entries) {
+        expect(
+          File(p.join(folder, 'records', name)).readAsBytesSync(),
+          bytes,
+          reason: name,
+        );
+      }
+      expect(home.note('Pasted').text, 'edited at home');
+      expect(
+        home.notepad.store.pendingSync().map((s) => s.id),
+        contains(note.id),
+      );
+    });
   });
 
   test('a file too large to be GPad\'s is reported, not read', () async {
