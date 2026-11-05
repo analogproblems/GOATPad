@@ -23,7 +23,7 @@ that Dropbox, OneDrive, Nextcloud or Syncthing keeps in step.
 | 1. Foundations | Flutter app for Windows and Linux, CI, design note, editor lab | Done |
 | 2. Local notepad | Autosave, session restore, folders and tab groups, search, saved settings, formatted paste | Done |
 | 3. Encrypted sync | End-to-end encryption, sync-folder and Google Drive backends | In progress (all built: sync folder, Google Drive, passphrase changes, tray sync; a real two-computer Google Drive check is next) |
-| 4. Release | Security review, GitHub Releases, self-updates, Windows installer, Flatpak | In progress (security review done; CI already builds the Windows zip, .deb and AppImage) |
+| 4. Release | Security review, GitHub Releases, self-updates, Windows installer, Flatpak | In progress (security review, releases, self-updates and the Windows installer done; Flatpak later) |
 
 See [docs/design.md](docs/design.md) for how it is meant to work and why.
 
@@ -140,9 +140,15 @@ to `flutter build` or `flutter run`.
 
 Get GPad from [Releases](https://github.com/analogproblems/GOATPad/releases):
 
-- **Windows 10 or 11:** `GPad-<version>-windows-x64.zip`. Unzip it anywhere
-  and run `gpad.exe` in the `GPad` folder. No installer or admin rights
-  needed.
+- **Windows 10 or 11:** `GPad-<version>-windows-x64-setup.exe`, the
+  installer. It installs GPad for you alone, in
+  `%LOCALAPPDATA%\Programs\GPad`, with no admin rights, and adds it to the
+  Start menu and to **Settings → Apps**, where you can uninstall it.
+  Uninstalling keeps your notes. Windows may warn about an unrecognized app
+  the first time, since the installer isn't code-signed yet: click **More
+  info**, then **Run anyway**.
+- **Windows, portable:** `GPad-<version>-windows-x64.zip`. Unzip it anywhere
+  and run `gpad.exe` in the `GPad` folder. Nothing is installed.
 - **Debian 12, Ubuntu 22.04 or newer:** `gpad_<version>_amd64.deb`. Install
   it with `sudo apt install ./gpad_<version>_amd64.deb`, then open GPad from
   the app menu or run `gpad`.
@@ -153,21 +159,24 @@ Get GPad from [Releases](https://github.com/analogproblems/GOATPad/releases):
 To check a download, see [docs/releasing.md](docs/releasing.md#checking-a-download).
 
 GPad updates itself. Twice a day it looks for a newer release on GitHub
-and checks it is signed with GPad's key. The Windows zip and the AppImage
-then install it, and it starts the next time you open GPad (or click
-**Restart now**). The .deb can't update itself without admin rights, so
-GPad tells you a new version is out instead. Turn the checks off in the
-window behind the ⓘ button in the sidebar.
+and checks it is signed with GPad's key. GPad from the Windows installer
+or zip, and the AppImage, then install it, and it starts the next time you
+open GPad (or click **Restart now**). The .deb can't update itself without
+admin rights, so GPad tells you a new version is out instead. Turn the
+checks off in the window behind the ⓘ button in the sidebar.
 
 ### Test builds
 
 Builds of every change are attached to its CI run under **Actions → CI →
-Artifacts**: `gpad-windows-x64` (the Windows folder, unzipped),
-`gpad-linux-deb` and `gpad-linux-appimage`. GitHub wraps each one in a zip,
-so unzip it first, then use it as above.
+Artifacts**: `gpad-windows-setup` (the Windows installer),
+`gpad-windows-x64` (the Windows folder, unzipped), `gpad-linux-deb` and
+`gpad-linux-appimage`. GitHub wraps each one in a zip, so unzip it first,
+then use it as above.
 
 The Linux builds run on Ubuntu 22.04, Debian 12 and anything newer, and on
-current Fedora. CI installs and starts them on each of those.
+current Fedora. CI installs and starts them on each of those. On Windows,
+CI installs GPad with the installer, starts it, finishes a self-update in
+it, installs over it and uninstalls it.
 
 ## Build from source
 

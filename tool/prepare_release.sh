@@ -7,7 +7,8 @@
 #   GPAD_UPDATE_SIGNING_KEY=... tool/prepare_release.sh TAG BUILDS OUT NOTES
 #
 # TAG is the pushed tag, like v0.1.0. BUILDS holds CI's artifacts, one
-# folder each: gpad-windows-x64, gpad-linux-deb and gpad-linux-appimage.
+# folder each: gpad-windows-x64, gpad-windows-setup, gpad-linux-deb and
+# gpad-linux-appimage.
 # The release's files go in OUT, and its notes in NOTES. The signing key is
 # the private key tool/make_update_key.sh made, as PEM text; it must match
 # tool/update_public_key.pem, which GPad builds check updates with.
@@ -38,9 +39,11 @@ awk -v v="$version" '
 grep -q '[^[:space:]]' "$notes" || fail "CHANGELOG.md has no notes under \"## $version\""
 
 windows="$builds/gpad-windows-x64"
+setup="$builds/gpad-windows-setup/GPad-${version}-windows-x64-setup.exe"
 deb="$builds/gpad-linux-deb/gpad_${version}_amd64.deb"
 appimage="$builds/gpad-linux-appimage/GPad-${version}-x86_64.AppImage"
 [ -f "$windows/gpad.exe" ] || fail "no gpad.exe in $windows"
+[ -f "$setup" ] || fail "no $setup"
 [ -f "$deb" ] || fail "no $deb"
 [ -f "$appimage" ] || fail "no $appimage"
 
@@ -54,11 +57,12 @@ trap 'rm -rf "$staging"' EXIT
 cp -R "$windows" "$staging/GPad"
 (cd "$staging" && zip -q -r -X "$out/GPad-${version}-windows-x64.zip" GPad)
 
-cp "$deb" "$appimage" "$out/"
+cp "$setup" "$deb" "$appimage" "$out/"
 chmod +x "$out/GPad-${version}-x86_64.AppImage"
 
 # What GPad's self-updates take from a release: its version, and each
-# download's size and SHA-256.
+# download's size and SHA-256. GPad from the installer updates from the zip,
+# like the portable one, so the installer isn't in it.
 entry() {
   printf '"%s":{"name":"%s","size":%s,"sha256":"%s"}' "$1" "$(basename "$2")" \
     "$(wc -c <"$2" | tr -d ' ')" "$(sha256sum "$2" | cut -d ' ' -f 1)"
