@@ -58,8 +58,8 @@ See [docs/design.md](docs/design.md) for how it is meant to work and why.
    tab joins the folder's group; click the group's label to fold it away.
 5. Press Ctrl+P and type part of any word. Closed and trashed notes turn up
    too.
-6. Copy part of a web page and press Ctrl+Shift+V. The formatting comes with
-   it; switch the note to Plain to see the Markdown underneath.
+6. Copy part of a web page and press Ctrl+Shift+V to paste it as a new note.
+   The formatting comes with it; switch the note to Plain to see the Markdown underneath.
 7. Open **Appearance** (the palette button) to try the themes and code
    colors. GPad remembers your choice.
 8. Click **Sync is off** at the bottom of the sidebar. Choose **Google
@@ -99,7 +99,7 @@ tray when the window is closed** in the sync window. Closing the window then
 leaves GPad in the system tray, and you quit from the tray icon's menu. On
 Linux this needs a desktop with a tray (KDE, Xfce, Cinnamon, MATE, Ubuntu;
 plain GNOME needs the AppIndicator extension) and libayatana-appindicator,
-which the .deb asks for.
+which the .deb recommends.
 
 To change your passphrase, or replace a recovery key that may have been
 seen, click the sync line in the sidebar and choose **Change passphrase…**
@@ -169,8 +169,8 @@ checks off in the window behind the ⓘ button in the sidebar.
 
 Builds of every change are attached to its CI run under **Actions → CI →
 Artifacts**: `gpad-windows-setup` (the Windows installer),
-`gpad-windows-x64` (the Windows folder, unzipped), `gpad-linux-deb` and
-`gpad-linux-appimage`. GitHub wraps each one in a zip, so unzip it first,
+`gpad-windows-x64` (the Windows folder, unzipped), `gpad-linux-deb`,
+`gpad-linux-appimage` and `gpad-linux-x64` (the Linux folder, unpackaged). GitHub wraps each one in a zip, so unzip it first,
 then use it as above.
 
 The Linux builds run on Ubuntu 22.04, Debian 12 and anything newer, and on
