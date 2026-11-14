@@ -84,7 +84,8 @@ jobs:
       # GPad's Google sign-in client, for syncing through Drive. Google
       # treats a desktop app's client secret as public, so it ships in the
       # app; it lives in secrets only to stay out of the repo. Builds
-      # without it (forks, say) ask for the person's own client instead.
+      # without it (forks, say) ask for the person's own client instead,
+      # but a release must have it, and a dry run warns without it.
       #
       # Self-updates come from this repository's releases, checked against
       # the public key in tool/update_public_key.pem. Without it, builds
@@ -95,6 +96,13 @@ jobs:
           GPAD_GOOGLE_CLIENT_SECRET: ${{ secrets.GPAD_GOOGLE_CLIENT_SECRET }}
           GPAD_UPDATE_REPO: ${{ github.repository }}
         run: |
+          if [ -z "$GPAD_GOOGLE_CLIENT_ID" ] || [ -z "$GPAD_GOOGLE_CLIENT_SECRET" ]; then
+            missing="No Google sign-in client: set the GPAD_GOOGLE_CLIENT_ID and GPAD_GOOGLE_CLIENT_SECRET secrets (docs/releasing.md)"
+            case "$GITHUB_REF" in
+              refs/tags/*) echo "::error::$missing"; exit 1 ;;
+            esac
+            [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || echo "::warning::$missing"
+          fi
           key=$(sed -n 2p tool/update_public_key.pem 2>/dev/null || true)
           flutter build linux --release \
             --dart-define=GPAD_GOOGLE_CLIENT_ID="$GPAD_GOOGLE_CLIENT_ID" \
@@ -171,6 +179,11 @@ jobs:
           GPAD_UPDATE_REPO: ${{ github.repository }}
         shell: pwsh
         run: |
+          if (-not $env:GPAD_GOOGLE_CLIENT_ID -or -not $env:GPAD_GOOGLE_CLIENT_SECRET) {
+            $missing = 'No Google sign-in client: set the GPAD_GOOGLE_CLIENT_ID and GPAD_GOOGLE_CLIENT_SECRET secrets (docs/releasing.md)'
+            if ($env:GITHUB_REF -like 'refs/tags/*') { "::error::$missing"; exit 1 }
+            if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { "::warning::$missing" }
+          }
           $key = ''
           if (Test-Path tool/update_public_key.pem) {
             $key = (Get-Content tool/update_public_key.pem)[1]
@@ -285,7 +298,7 @@ jobs:
             notes.md
           retention-days: 7
       # Lets anyone check a download was built here, from this tag:
-      # gh attestation verify FILE --repo analogproblems/GOATPad
+      # gh attestation verify FILE --repo jasondwhyte/GOATPad
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: env.DRY_RUN == 'false'
         with:

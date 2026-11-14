@@ -138,7 +138,7 @@ to `flutter build` or `flutter run`.
 
 ## Download
 
-Get GPad from [Releases](https://github.com/analogproblems/GOATPad/releases):
+Get GPad from [Releases](https://github.com/jasondwhyte/GOATPad/releases):
 
 - **Windows 10 or 11:** `GPad-<version>-windows-x64-setup.exe`, the
   installer. It installs GPad for you alone, in

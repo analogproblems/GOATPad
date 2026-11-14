@@ -53,13 +53,13 @@ build_deb() {
 Package: gpad
 Version: $version
 Architecture: amd64
-Maintainer: GOATPad contributors <https://github.com/analogproblems/GOATPad>
+Maintainer: GOATPad contributors <https://github.com/jasondwhyte/GOATPad>
 Installed-Size: $size
 Depends: libgtk-3-0t64 | libgtk-3-0, libegl1, libgles2, libepoxy0, libstdc++6, libc6 (>= 2.34)
 Recommends: libsecret-1-0, libayatana-appindicator3-1
 Section: editors
 Priority: optional
-Homepage: https://github.com/analogproblems/GOATPad
+Homepage: https://github.com/jasondwhyte/GOATPad
 Description: Notepad that keeps everything you paste
  GPad is a fast, Sublime-style notepad. Each note picks Rich, Code or Plain
  mode from what you paste, and closing a tab never throws a note away.

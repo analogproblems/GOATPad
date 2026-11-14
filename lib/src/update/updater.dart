@@ -39,7 +39,7 @@ class UpdateSource {
 
   static final _repository = RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
 
-  /// Like `analogproblems/GOATPad`.
+  /// Like `jasondwhyte/GOATPad`.
   final String repository;
 
   /// The raw Ed25519 key that signs each release's manifest.

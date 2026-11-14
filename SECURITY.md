@@ -4,7 +4,7 @@
 
 Please report security problems privately, not in a public issue. Use
 **Report a vulnerability** on this repository's
-[Security tab](https://github.com/analogproblems/GOATPad/security), which
+[Security tab](https://github.com/jasondwhyte/GOATPad/security), which
 sends the report to the maintainers only.
 
 Say what you found, how to make it happen, and which GPad version and
