@@ -27,10 +27,10 @@
 AppId={{897E6F70-EBD0-4396-8FA0-41AD9320D1E2}
 AppName=GPad
 AppVersion={#AppVersion}
-AppPublisher=analogproblems
-AppPublisherURL=https://github.com/analogproblems/GOATPad
-AppSupportURL=https://github.com/analogproblems/GOATPad/issues
-AppUpdatesURL=https://github.com/analogproblems/GOATPad/releases
+AppPublisher=jasondwhyte
+AppPublisherURL=https://github.com/jasondwhyte/GOATPad
+AppSupportURL=https://github.com/jasondwhyte/GOATPad/issues
+AppUpdatesURL=https://github.com/jasondwhyte/GOATPad/releases
 VersionInfoVersion={#AppVersion}
 VersionInfoDescription=GPad installer
 ; Without the version, which self-updates would leave out of date; GPad

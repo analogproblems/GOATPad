@@ -37,6 +37,18 @@ replace a key that is already there. Then:
 3. Commit `tool/update_public_key.pem`. Builds from then on carry it, and
    update only to releases signed with its private key.
 
+## Once: the Google sign-in client
+
+Release builds sign in to Google Drive with GPad's own OAuth client, so
+people don't have to make one. Create a **Desktop app** client as in
+[Your own Google client](../README.md#your-own-google-client), published
+to production, and add its ID and secret as the repository secrets
+`GPAD_GOOGLE_CLIENT_ID` and `GPAD_GOOGLE_CLIENT_SECRET`. A tagged release
+stops with an error without them, and a dry run warns. Google treats a
+desktop app's secret as public, so it is no harm that it ships inside
+GPad; it is a secret here only to keep it out of the repository and out of
+forks' builds.
+
 ## Cutting a release
 
 1. In a pull request, set the new version in `pubspec.yaml` (for example
@@ -114,5 +126,9 @@ this repository's CI built it, from which commit. With the
 [GitHub CLI](https://cli.github.com/):
 
 ```sh
-gh attestation verify GPad-<version>-x86_64.AppImage --repo analogproblems/GOATPad
+gh attestation verify GPad-<version>-x86_64.AppImage --repo jasondwhyte/GOATPad
 ```
+
+GPad 0.1.0 was built before the repository moved here from
+`analogproblems/GOATPad`, so its attestations name that repository: check
+its downloads with `--repo analogproblems/GOATPad`.
